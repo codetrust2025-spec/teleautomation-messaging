@@ -189,9 +189,12 @@ async def _push_state() -> None:
 async def websocket_endpoint(websocket: WebSocket):
     from core import dashboard_auth_vps as dash_auth
 
+    profile = dash_auth.operator_profile_from_cookies(dict(websocket.cookies))
+    if not dash_auth.is_admin_profile(profile):
+        await websocket.close(code=4403, reason="Authentication required")
+        return
     await websocket.accept()
     broadcast.active_connections.append(websocket)
-    profile = dash_auth.operator_profile_from_cookies(dict(websocket.cookies))
     broadcast.connection_profiles[websocket] = profile
     full = await asyncio.to_thread(registry.build_ui_state)
     await websocket.send_json({"type": "state", **full})

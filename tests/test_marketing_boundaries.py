@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from core import crm_store, dashboard_auth_vps, knowledge_assistant
 
 
@@ -71,3 +73,29 @@ def test_internal_contract_uses_service_auth_with_dashboard_auth(tmp_path, monke
     )
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_marketing_websocket_requires_admin_session_and_cleans_up(monkeypatch):
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    from core import broadcast
+    import main
+
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "dashboard-fixture")
+    monkeypatch.setenv("DASHBOARD_AUTH_SECRET", "websocket-fixture-secret")
+    client = TestClient(main.app)
+
+    with pytest.raises(WebSocketDisconnect) as denied:
+        with client.websocket_connect("/ws"):
+            pass
+    assert denied.value.code == 4403
+
+    token = dashboard_auth_vps.create_session_token("marketing-admin")
+    baseline = len(broadcast.active_connections)
+    with client.websocket_connect(
+        "/ws",
+        headers={"cookie": f"{dashboard_auth_vps.SESSION_COOKIE}={token}"},
+    ) as websocket:
+        assert websocket.receive_json()["type"] == "state"
+        assert len(broadcast.active_connections) == baseline + 1
+    assert len(broadcast.active_connections) == baseline
