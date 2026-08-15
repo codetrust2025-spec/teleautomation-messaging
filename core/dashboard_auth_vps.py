@@ -28,6 +28,7 @@ _PUBLIC_EXACT = frozenset({
     "/auth/verify-admin",
     "/auth/status",
     "/health",
+    "/version",
     "/favicon.svg",
     "/icons.svg",
     "/sw.js",
@@ -44,7 +45,7 @@ _PUBLIC_PREFIXES = (
 # First path segment for API routes (must stay in sync with server.py serve_spa).
 _API_ROOTS = frozenset({
     "groups", "account", "accounts", "login", "auth", "message", "start", "stop",
-    "state", "health", "ws", "inbox", "crm", "stats", "admin", "ai", "public",
+    "state", "health", "version", "ws", "inbox", "crm", "stats", "admin", "ai", "public",
     "metrics", "alerts", "voice",
     "webhooks", "whatsapp", "push", "devices", "demo-tools", "workspace", "fleet", "api",
 })

@@ -9,10 +9,12 @@
 # headers unless proxy_set_header Upgrade/Connection are set, and the symptom is
 # a WebSocket that fails only in the hosted environment.
 
-{
-	# Falls back to Caddy's internal default when ACME_EMAIL is unset.
-	email {$ACME_EMAIL}
-}
+# No global block: an `email` directive with an empty ACME_EMAIL is a parse
+# error ("wrong argument count"), and Caddy then crash-loops, which presents as
+# every request being refused rather than as a configuration problem. Caddy
+# issues certificates without an account email, so the directive is omitted
+# rather than defaulted to a fake address. An operator who wants expiry notices
+# can add `email you@example.com` here.
 
 # Site addresses come in fully formed from compose, which applies the sslip.io
 # default. Caddy does not support nesting one placeholder inside another's
