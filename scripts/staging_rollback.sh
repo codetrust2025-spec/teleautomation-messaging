@@ -12,25 +12,40 @@
 set -euo pipefail
 
 COMPOSE="docker compose -f docker-compose.staging.yml"
-: "${MARKETING_SHA:?set MARKETING_SHA to the release being rolled back to}"
-: "${OPERATIONS_SHA:?set OPERATIONS_SHA to the release being rolled back to}"
-
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 PEER="$(cd "$HERE/../teleautomation-business" && pwd)"
 
+# Either service may be rolled back alone. That is the point of the split: a
+# Marketing regression must be revertible without touching Operations, and vice
+# versa. Leave a SHA unset to hold that service at its current release.
+: "${MARKETING_SHA:=}"
+: "${OPERATIONS_SHA:=}"
+[ -n "$MARKETING_SHA$OPERATIONS_SHA" ] || {
+  echo "set MARKETING_SHA and/or OPERATIONS_SHA to the release being rolled back to"; exit 1; }
+
+REBUILD=""
 echo "== rolling back to =="
-echo "  marketing  $MARKETING_SHA"
-echo "  operations $OPERATIONS_SHA"
-
-git -C "$HERE" checkout --quiet "$MARKETING_SHA"
-git -C "$PEER" checkout --quiet "$OPERATIONS_SHA"
-
-export RELEASE_SHA_MARKETING="$MARKETING_SHA"
-export RELEASE_SHA_OPERATIONS="$OPERATIONS_SHA"
+if [ -n "$MARKETING_SHA" ]; then
+  echo "  marketing  $MARKETING_SHA"
+  git -C "$HERE" checkout --quiet "$MARKETING_SHA"
+  export RELEASE_SHA_MARKETING="$MARKETING_SHA"
+  REBUILD="$REBUILD marketing-api"
+else
+  echo "  marketing  unchanged"
+fi
+if [ -n "$OPERATIONS_SHA" ]; then
+  echo "  operations $OPERATIONS_SHA"
+  git -C "$PEER" checkout --quiet "$OPERATIONS_SHA"
+  export RELEASE_SHA_OPERATIONS="$OPERATIONS_SHA"
+  REBUILD="$REBUILD operations-api"
+else
+  echo "  operations unchanged"
+fi
 
 # Only the application containers are rebuilt. Databases and volumes are
 # untouched, so persistent state carries across the rollback.
-$COMPOSE up -d --build marketing-api operations-api
+# shellcheck disable=SC2086
+$COMPOSE up -d --build $REBUILD
 
 echo "== verifying the rolled-back release =="
 FAIL=0
@@ -49,6 +64,7 @@ wait_healthy() {
 
 for pair in "marketing-api:$MARKETING_SHA" "operations-api:$OPERATIONS_SHA"; do
   svc="${pair%%:*}"; want="${pair#*:}"
+  [ -n "$want" ] || continue
   if wait_healthy "$svc"; then
     echo "  PASS  $svc healthy after rollback"
   else

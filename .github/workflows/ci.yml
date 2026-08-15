@@ -65,7 +65,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: {path: teleautomation-messaging}
+        # Enough history to check out a real previous commit for the rollback
+        # rehearsal; a shallow clone cannot roll back to anything.
+        with: {path: teleautomation-messaging, fetch-depth: 0}
       - name: Check peer access
         id: peer
         run: |
@@ -168,6 +170,18 @@ jobs:
           export RELEASE_SHA_OPERATIONS=peer-under-test
           bash scripts/staging_backup.sh backups/ci
           bash scripts/staging_restore.sh backups/ci
+
+          # Roll Marketing back one commit while Operations stays put. Beyond
+          # proving rollback works, this proves the two services are genuinely
+          # independently deployable: reverting one must not require touching
+          # the other, which is the property the whole split exists for.
+          PREV=$(git rev-parse HEAD~1)
+          MARKETING_SHA="$PREV" bash scripts/staging_rollback.sh
+
+          # Return to the release under test so the stack is left as found.
+          git checkout --quiet "${{ github.sha }}" 2>/dev/null || git checkout --quiet -
+          RELEASE_SHA_MARKETING="${{ github.sha }}" \
+            docker compose -f docker-compose.staging.yml up -d --build marketing-api
 
       - name: Tear down the staging stack
         if: always() && steps.peer.outputs.available == 'true'
