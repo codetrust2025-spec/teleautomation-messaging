@@ -14,7 +14,11 @@
 	email {$ACME_EMAIL}
 }
 
-marketing.{$STAGING_IP}.sslip.io {
+# Site addresses are overridable so CI can exercise this exact file over plain
+# HTTP. Automatic certificates need a public IP that CI does not have, but the
+# reverse_proxy and WebSocket blocks below are the parts that actually break,
+# and those are worth testing against the real config rather than a copy.
+{$MARKETING_SITE:marketing.{$STAGING_IP}.sslip.io} {
 	encode gzip
 
 	# Long-lived sockets must not be cut short by the default write timeout.
@@ -40,7 +44,7 @@ marketing.{$STAGING_IP}.sslip.io {
 	}
 }
 
-operations.{$STAGING_IP}.sslip.io {
+{$OPERATIONS_SITE:operations.{$STAGING_IP}.sslip.io} {
 	encode gzip
 
 	@websocket {

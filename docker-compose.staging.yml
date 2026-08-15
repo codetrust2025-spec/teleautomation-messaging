@@ -37,6 +37,11 @@ services:
     environment:
       STAGING_IP: ${STAGING_IP:?set STAGING_IP to the host public IPv4}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      # Left unset in real staging, where the sslip.io defaults apply. CI sets
+      # these to http:// addresses so the same Caddyfile can be exercised
+      # without the public IP that automatic certificates require.
+      MARKETING_SITE: ${MARKETING_SITE:-}
+      OPERATIONS_SITE: ${OPERATIONS_SITE:-}
     volumes:
       - ./deploy/staging/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data          # issued certificates must survive restarts
