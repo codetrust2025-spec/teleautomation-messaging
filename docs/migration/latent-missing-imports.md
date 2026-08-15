@@ -76,3 +76,48 @@ all import modules that are absent. If any of those paths is exercised in
 production today it fails the same way. This inventory should be worked through
 on its own, with the provider available to verify each fix — not folded into the
 split cutover.
+
+---
+
+# Related class: attributes read that AccountState never defines
+
+Found by an independent sweep while root-causing the `/groups/lists` 500, and
+adversarially verified rather than inferred.
+
+`AccountState` once had bare `success_list` / `failed_list` fields. A later
+refactor split runtime state per feature into `campaign_*` / `forwarding_*`
+fields behind `FeatureRuntimeProxy`, migrated the workers to write through the
+proxy, and updated `to_dict()` to re-expose the bare names as **dict keys**.
+Several readers were never migrated and still read the pre-refactor names
+straight off the object.
+
+Because `AccountState` is a plain dataclass with no `__slots__` and no
+`__getattr__`, those reads raise `AttributeError` rather than returning empty.
+
+**Every site below exists identically in the monolith**, so production carries
+them today. None was introduced by the split.
+
+| Site | Effect | Severity |
+|---|---|---|
+| `workers/account_worker.py:924` — `campaign_runtime(state).heavy_rate_limit` resolves to `campaign_heavy_rate_limit`, which is never defined or written | Raises on the **live campaign send path**, swallowed by a broad `except`, so the group is reported as `"error"` | **High** |
+| `workers/account_worker.py:589` — `self.state.cycle` (only `campaign_cycle`/`forwarding_cycle` exist) | Raises inside `_log`, swallowed; structured log entries are dropped | Medium, silent |
+| `workers/account_worker.py:851` — `st.next_cycle_in = remaining` on the raw state | Creates a phantom attribute nothing reads; the flood/rate-limit countdown never reaches the UI | Medium, silent |
+
+The sweep reported roughly two dozen further call sites reading short names
+through `FeatureRuntimeProxy` with no `{prefix}_` backing field.
+
+## Why these are not fixed here
+
+They are inherited production defects in worker internals, not split
+regressions, and they sit on the Telegram send path. Verifying a change to them
+needs live Telegram sessions, which staging deliberately does not have — the
+only honest way to test a fix is against the provider. Folding an unverifiable
+worker-internals change into the split cutover would add risk to a release whose
+whole purpose is to change nothing but topology.
+
+`/groups/lists` was fixed because the split made it reachable from restored UI
+and it returned a hard 500. The rest belong to a separate piece of work, with
+the provider available.
+
+The monolith's own copy at `api/routers/groups.py:89` remains unfixed and will
+still 500 if anything calls it.
