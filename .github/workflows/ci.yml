@@ -144,7 +144,10 @@ jobs:
           set -euo pipefail
           export RELEASE_SHA_MARKETING="${{ github.sha }}"
           export RELEASE_SHA_OPERATIONS=peer-under-test
-          docker compose -f docker-compose.staging.yml up -d --build
+          # --profile edge starts Caddy. This job exercises the standalone
+          # topology where staging owns 80/443; without the profile Caddy is
+          # skipped and every proxy assertion below tests nothing.
+          docker compose -f docker-compose.staging.yml --profile edge up -d --build
           bash scripts/staging_stack_check.sh
 
       # Backup, restore and rollback are STAGING VERIFIED gates. Exercising them
@@ -195,4 +198,4 @@ jobs:
           MARKETING_AUTH_SECRET: x
           OPERATIONS_DASHBOARD_PASSWORD: x
           OPERATIONS_AUTH_SECRET: x
-        run: docker compose -f docker-compose.staging.yml down -v
+        run: docker compose -f docker-compose.staging.yml --profile edge down -v
