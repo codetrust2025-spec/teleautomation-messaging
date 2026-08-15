@@ -22,7 +22,9 @@
 # Isolated test infrastructure only. Never point this at production.
 set -uo pipefail
 
-COMPOSE="docker compose -f docker-compose.dual.yml"
+# Defaults to the CI dual stack; point COMPOSE_FILES at the staging stack to run
+# these same contracts against a hosted deployment.
+COMPOSE="docker compose ${COMPOSE_FILES:--f docker-compose.dual.yml}"
 TOKEN="${INTERNAL_SERVICE_TOKEN:-split-test-shared-token}"
 PASS=0
 FAIL=0
@@ -84,8 +86,12 @@ from services import cross_project_outbox as o
 print(sum(1 for r in o._load() if r.get('delivered_at') is None))" 2>/dev/null | tr -d '[:space:]'
 }
 
-step "Bring up the isolated dual-service stack"
-$COMPOSE up -d --build || { echo "compose up failed"; exit 1; }
+if [ "${SKIP_BRINGUP:-0}" = "1" ]; then
+  step "Using the already-running stack"
+else
+  step "Bring up the isolated dual-service stack"
+  $COMPOSE up -d --build || { echo "compose up failed"; exit 1; }
+fi
 
 step "1-2. Both services healthy"
 wait_healthy marketing-api && ok "Marketing container healthy" || bad "Marketing container healthy"

@@ -1,0 +1,58 @@
+# Temporary staging server blocks, for a host whose nginx already serves
+# production.
+#
+# STAGING_IP is substituted at install time. Installed as its own file in
+# sites-available/sites-enabled: production's server blocks are not edited, and
+# because every block here is bound to a specific staging server_name, requests
+# for production hostnames continue to match production's own block exactly as
+# before.
+#
+# certbot fills in the TLS directives when it issues certificates for these two
+# hostnames; until then these are plain HTTP blocks and certbot's HTTP-01
+# challenge is served over port 80, which nginx already owns.
+
+server {
+    listen 80;
+    server_name marketing.__STAGING_IP__.sslip.io;
+
+    # Staging only. Keep it out of search results even though it is temporary.
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:18100;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket upgrade. nginx drops these headers unless they are set
+        # explicitly, and the failure is invisible until something sits in
+        # front of the application.
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+
+server {
+    listen 80;
+    server_name operations.__STAGING_IP__.sslip.io;
+
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:18200;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
