@@ -131,8 +131,8 @@ function backendRoutes() {
 describe('marketing backend routes are reachable from the UI', () => {
   // Machine-to-machine and infrastructure routes have no UI by design.
   const NON_UI = [
-    /^\/internal\//, /^\/health$/, /^\/$/, /^\/ws/, /^\/openapi/, /^\/docs/,
-    /^\/webhook/, /^\/whatsapp\/webhook/, /^\/static/, /^\/favicon/,
+    /^\/internal\//, /^\/health$/, /^\/version$/, /^\/$/, /^\/ws/, /^\/openapi/,
+    /^\/docs/, /^\/webhook/, /^\/whatsapp\/webhook/, /^\/static/, /^\/favicon/,
     /^\/login$/, /^\/logout$/, /^\/login\/status$/, /^\/auth\/login/, /^\/auth\/logout/,
     /\{full_path/,          // SPA catch-all
   ]
