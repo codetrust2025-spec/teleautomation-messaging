@@ -21,9 +21,17 @@ COMPOSE="docker compose -f docker-compose.staging.yml -f docker-compose.cotenant
 MKT_HOST="marketing.${STAGING_IP}.sslip.io"
 OPS_HOST="operations.${STAGING_IP}.sslip.io"
 
+# Releases are shipped as git archives of an exact commit, which carry no .git
+# directory, so the commit is supplied explicitly. Falling back to rev-parse
+# keeps this usable in a normal clone.
+MKT_SHA="${RELEASE_SHA_MARKETING:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)}"
+OPS_SHA="${RELEASE_SHA_OPERATIONS:-$(git -C "$PEER" rev-parse HEAD 2>/dev/null || echo unknown)}"
+[ "$MKT_SHA" = unknown ] && { echo "set RELEASE_SHA_MARKETING"; exit 1; }
+[ "$OPS_SHA" = unknown ] && { echo "set RELEASE_SHA_OPERATIONS"; exit 1; }
+
 echo "== releases under deployment =="
-echo "  marketing  $(git -C "$HERE" rev-parse HEAD)"
-echo "  operations $(git -C "$PEER" rev-parse HEAD)"
+echo "  marketing  $MKT_SHA"
+echo "  operations $OPS_SHA"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "== generating staging-only secrets =="
@@ -31,8 +39,8 @@ if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<EOF
 # Generated $(date -u +%Y-%m-%dT%H:%M:%SZ). Staging only. Never commit.
 STAGING_IP=$STAGING_IP
-RELEASE_SHA_MARKETING=$(git -C "$HERE" rev-parse HEAD)
-RELEASE_SHA_OPERATIONS=$(git -C "$PEER" rev-parse HEAD)
+RELEASE_SHA_MARKETING=$MKT_SHA
+RELEASE_SHA_OPERATIONS=$OPS_SHA
 RELEASE_BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 MARKETING_DB_PASSWORD=$(gen)
 OPERATIONS_DB_PASSWORD=$(gen)
@@ -48,8 +56,8 @@ EOF
   echo "  wrote $ENV_FILE (0600)"
 else
   echo "== reusing $ENV_FILE =="
-  sed -i "s|^RELEASE_SHA_MARKETING=.*|RELEASE_SHA_MARKETING=$(git -C "$HERE" rev-parse HEAD)|" "$ENV_FILE"
-  sed -i "s|^RELEASE_SHA_OPERATIONS=.*|RELEASE_SHA_OPERATIONS=$(git -C "$PEER" rev-parse HEAD)|" "$ENV_FILE"
+  sed -i "s|^RELEASE_SHA_MARKETING=.*|RELEASE_SHA_MARKETING=$MKT_SHA|" "$ENV_FILE"
+  sed -i "s|^RELEASE_SHA_OPERATIONS=.*|RELEASE_SHA_OPERATIONS=$OPS_SHA|" "$ENV_FILE"
 fi
 
 echo "== starting the staging stack (loopback ports only) =="
