@@ -29,6 +29,11 @@ x-release: &release
 
 services:
   caddy:
+    # Only starts under the "edge" profile. On a dedicated staging host Caddy
+    # owns 80/443 and terminates TLS. When staging shares a host that already
+    # runs a reverse proxy on those ports, the existing proxy fronts staging
+    # instead and this must not start: see docker-compose.cotenant.yml.
+    profiles: ["edge"]
     image: caddy:2-alpine
     restart: unless-stopped
     ports:

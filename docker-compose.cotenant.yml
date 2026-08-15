@@ -1,0 +1,65 @@
+# Overrides for running staging on a host that ALREADY has a reverse proxy on
+# ports 80/443 — for example a production VPS lent to staging temporarily.
+#
+#   docker compose -f docker-compose.staging.yml -f docker-compose.cotenant.yml up -d
+#
+# Caddy is not started (it lives behind the "edge" profile), because the host's
+# existing proxy owns 80/443 and terminates TLS. The two applications are
+# published on loopback-only high ports for that proxy to reach.
+#
+# Everything here exists to keep a co-tenant staging stack from harming the
+# production workload sharing the machine:
+#
+#   - ports bind 127.0.0.1 only, so nothing new is exposed to the internet and
+#     no production port can be taken
+#   - memory limits, so a staging leak cannot starve production
+#   - log rotation caps, because an unbounded container log is the most likely
+#     way a co-tenant workload fills a shared disk
+#
+# Isolation that already comes from the base file: its own compose project name,
+# its own network, its own PostgreSQL containers, its own volumes and its own
+# secrets. Staging never touches the host PostgreSQL, the production data
+# directories, or production credentials.
+
+services:
+  marketing-api:
+    ports:
+      - "127.0.0.1:18100:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+    logging: &capped
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  operations-api:
+    ports:
+      - "127.0.0.1:18200:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 1500M
+    logging: *capped
+
+  marketing-db:
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging: *capped
+
+  operations-db:
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging: *capped
+
+  marketing-migrate:
+    logging: *capped
+
+  operations-migrate:
+    logging: *capped
