@@ -75,10 +75,31 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Dual-service verification SKIPPED: secret PEER_REPO_TOKEN is not set, so the private Operations repository cannot be checked out."
           fi
+      # While the peer's split branch still exists, verify against it: these two
+      # branches merge together, so PR-against-PR is the combination that will
+      # actually be deployed. Checking out the peer's default branch instead
+      # would pair new Marketing code with the pre-split Operations baseline, a
+      # combination that never ships. Once the peer branch merges and is
+      # deleted, this falls back to the default branch on its own.
+      - name: Resolve peer ref
+        id: peerref
+        if: steps.peer.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PEER_REPO_TOKEN }}
+          PEER_BRANCH: chore/container-stack-hardening
+        run: |
+          if gh api "repos/codetrust2025-spec/teleautomation-business/branches/$PEER_BRANCH" >/dev/null 2>&1; then
+            echo "ref=$PEER_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "::notice::Verifying against peer branch $PEER_BRANCH"
+          else
+            echo "ref=" >> "$GITHUB_OUTPUT"
+            echo "::notice::Peer branch $PEER_BRANCH is gone; verifying against the peer default branch"
+          fi
       - uses: actions/checkout@v4
         if: steps.peer.outputs.available == 'true'
         with:
           repository: codetrust2025-spec/teleautomation-business
+          ref: ${{ steps.peerref.outputs.ref }}
           token: ${{ secrets.PEER_REPO_TOKEN }}
           path: teleautomation-business
       - name: Run dual-service verification
