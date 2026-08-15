@@ -145,6 +145,30 @@ jobs:
           docker compose -f docker-compose.staging.yml up -d --build
           bash scripts/staging_stack_check.sh
 
+      # Backup, restore and rollback are STAGING VERIFIED gates. Exercising them
+      # here means they are known to work before a host exists, rather than
+      # being discovered broken at the moment they are needed.
+      - name: Verify backup, restore and rollback
+        if: steps.peer.outputs.available == 'true'
+        working-directory: teleautomation-messaging
+        env:
+          STAGING_IP: 127.0.0.1
+          MARKETING_SITE: http://marketing.test
+          OPERATIONS_SITE: http://operations.test
+          MARKETING_DB_PASSWORD: ci-marketing-db
+          OPERATIONS_DB_PASSWORD: ci-operations-db
+          INTERNAL_SERVICE_TOKEN: ci-internal-token
+          MARKETING_DASHBOARD_PASSWORD: ci-marketing-dash
+          MARKETING_AUTH_SECRET: ci-marketing-secret
+          OPERATIONS_DASHBOARD_PASSWORD: ci-operations-dash
+          OPERATIONS_AUTH_SECRET: ci-operations-secret
+        run: |
+          set -euo pipefail
+          export RELEASE_SHA_MARKETING="${{ github.sha }}"
+          export RELEASE_SHA_OPERATIONS=peer-under-test
+          bash scripts/staging_backup.sh backups/ci
+          bash scripts/staging_restore.sh backups/ci
+
       - name: Tear down the staging stack
         if: always() && steps.peer.outputs.available == 'true'
         working-directory: teleautomation-messaging
