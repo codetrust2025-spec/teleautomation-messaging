@@ -1223,6 +1223,21 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/version")
+async def version():
+    """Identify exactly which commit is serving this deployment.
+
+    A deployment that cannot say what it is running cannot be verified, and
+    cannot be rolled back with confidence. RELEASE_SHA is baked in at image
+    build time; "unknown" means the image was built outside the release path.
+    """
+    return {
+        "service": os.getenv("SERVICE_NAME", "teleautomation-messaging"),
+        "sha": os.getenv("RELEASE_SHA", "unknown"),
+        "built_at": os.getenv("RELEASE_BUILT_AT", "unknown"),
+    }
+
+
 # ── Groups (API-only writes to master list) ─────────────────────────────────
 
 @app.get("/groups")
