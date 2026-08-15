@@ -27,6 +27,25 @@ wait_healthy() {
   return 1
 }
 
+# A failure here is usually a container that never started. Print enough to say
+# which one and why, instead of leaving a wall of connection-refused results.
+diagnose() {
+  printf '\n---- container state ----\n'
+  $COMPOSE ps
+  for svc in caddy marketing-api operations-api; do
+    printf '\n---- %s (last 25 lines) ----\n' "$svc"
+    $COMPOSE logs --tail 25 "$svc" 2>&1 | tail -25
+  done
+}
+trap 'if [ "$FAIL" -gt 0 ]; then diagnose; fi' EXIT
+
+step "0. Reverse proxy is listening"
+if $COMPOSE ps caddy 2>/dev/null | grep -qiE 'up|running'; then
+  ok "Caddy container is running"
+else
+  bad "Caddy container is running" "not up; every proxy check below will fail"
+fi
+
 step "1-2. Application containers become healthy"
 wait_healthy marketing-api && ok "Marketing healthy" || bad "Marketing healthy"
 wait_healthy operations-api && ok "Operations healthy" || bad "Operations healthy"
@@ -58,10 +77,12 @@ got=$($COMPOSE exec -T marketing-api python -c "
 import urllib.request,json
 print(json.load(urllib.request.urlopen('http://127.0.0.1:8000/version',timeout=5))['sha'])" 2>/dev/null | tr -d '[:space:]')
 [ "$got" = "$want_mkt" ] && ok "Marketing /version reports $got" || bad "Marketing /version" "want=$want_mkt got=${got:-none}"
+# stderr is kept: when this returns nothing the reason matters, and swallowing
+# it was why the first run reported an unexplained "none".
 got=$($COMPOSE exec -T operations-api python -c "
 import urllib.request,json
 d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/version',timeout=5))
-print(d['sha'], d['service'])" 2>/dev/null)
+print(d['sha'], d['service'])" 2>&1 | tr -d '\r')
 case "$got" in
   *peer-under-test*teleautomation-operations*) ok "Operations /version reports its build ($got)";;
   *) bad "Operations /version" "got=${got:-none}";;

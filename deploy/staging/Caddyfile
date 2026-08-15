@@ -14,11 +14,15 @@
 	email {$ACME_EMAIL}
 }
 
-# Site addresses are overridable so CI can exercise this exact file over plain
-# HTTP. Automatic certificates need a public IP that CI does not have, but the
-# reverse_proxy and WebSocket blocks below are the parts that actually break,
-# and those are worth testing against the real config rather than a copy.
-{$MARKETING_SITE:marketing.{$STAGING_IP}.sslip.io} {
+# Site addresses come in fully formed from compose, which applies the sslip.io
+# default. Caddy does not support nesting one placeholder inside another's
+# default value, so composing the hostname here would not work.
+#
+# Being overridable lets CI exercise this exact file over plain HTTP: automatic
+# certificates need a public IP CI does not have, but the reverse_proxy and
+# WebSocket blocks are the parts that actually break, and they are worth testing
+# against the real config rather than a copy of it.
+{$MARKETING_SITE} {
 	encode gzip
 
 	# Long-lived sockets must not be cut short by the default write timeout.
@@ -44,7 +48,7 @@
 	}
 }
 
-{$OPERATIONS_SITE:operations.{$STAGING_IP}.sslip.io} {
+{$OPERATIONS_SITE} {
 	encode gzip
 
 	@websocket {
