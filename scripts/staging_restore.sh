@@ -9,7 +9,9 @@
 # before it is ever needed.
 set -euo pipefail
 
-COMPOSE="docker compose -f docker-compose.staging.yml"
+# COMPOSE_FILES lets these run against a co-tenant stack, which needs the
+# override file and its env file to resolve.
+COMPOSE="docker compose ${COMPOSE_FILES:--f docker-compose.staging.yml}"
 SRC="${1:?usage: staging_restore.sh <backup-directory>}"
 SUFFIX="${RESTORE_SUFFIX:-restore}"
 

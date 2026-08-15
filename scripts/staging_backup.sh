@@ -13,7 +13,9 @@
 # was written, rather than assuming it.
 set -euo pipefail
 
-COMPOSE="docker compose -f docker-compose.staging.yml"
+# COMPOSE_FILES lets these run against a co-tenant stack, which needs the
+# override file and its env file to resolve.
+COMPOSE="docker compose ${COMPOSE_FILES:--f docker-compose.staging.yml}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="${1:-backups/$STAMP}"
 mkdir -p "$DEST"

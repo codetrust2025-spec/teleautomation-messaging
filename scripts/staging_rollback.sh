@@ -11,7 +11,9 @@
 # forward-only migration.
 set -euo pipefail
 
-COMPOSE="docker compose -f docker-compose.staging.yml"
+# COMPOSE_FILES lets these run against a co-tenant stack, which needs the
+# override file and its env file to resolve.
+COMPOSE="docker compose ${COMPOSE_FILES:--f docker-compose.staging.yml}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 PEER="$(cd "$HERE/../teleautomation-business" && pwd)"
 
