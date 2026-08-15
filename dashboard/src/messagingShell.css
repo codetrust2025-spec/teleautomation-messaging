@@ -1,0 +1,34 @@
+.messaging-desktop-app { width: 100%; height: 100dvh; overflow: hidden; }
+.messaging-sidebar__label { padding: 4px 12px 10px; color: #59677a; font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+.messaging-header__title-wrap { min-width: 190px; }
+.messaging-header__eyebrow { margin: 0 0 2px; color: #64748b; font-size: 9px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
+.messaging-header__title { margin: 0; color: #f3f6fb; font-size: 18px; font-weight: 760; letter-spacing: -0.02em; }
+.messaging-header__user-wrap { position: relative; }
+.messaging-header__runtime-actions { margin-left: auto; }
+.messaging-header__user-menu { top: calc(100% + 10px); right: 0; bottom: auto; }
+.messaging-app-error { flex: 0 0 auto; margin: 10px 20px 0; border: 1px solid rgba(248, 113, 113, 0.3); border-radius: 10px; background: rgba(127, 29, 29, 0.2); color: #fecaca; }
+.messaging-body { min-width: 0; }
+.messaging-menu-button { display: none; }
+.messaging-nav-backdrop { display: none; }
+
+@media (max-width: 900px) {
+  .messaging-desktop-app { display: block; height: auto; min-height: 100dvh; overflow: visible; }
+  .messaging-desktop-app .desktop-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 50;
+    width: min(280px, 84vw);
+    height: 100dvh;
+    transform: translateX(-105%);
+    transition: transform 160ms ease;
+  }
+  .messaging-desktop-app .desktop-sidebar--open { transform: translateX(0); }
+  .messaging-nav-backdrop { position: fixed; inset: 0; z-index: 40; display: block; border: 0; background: rgba(0, 0, 0, 0.64); }
+  .messaging-desktop-app .desktop-main { min-height: 100dvh; }
+  .messaging-desktop-app .desktop-header { position: sticky; top: 0; z-index: 30; min-height: 64px; padding: 0 14px; }
+  .messaging-menu-button { display: grid; flex: 0 0 36px; place-items: center; }
+  .messaging-header__title-wrap { min-width: 0; flex: 1; }
+  .messaging-header__title { font-size: 16px; }
+  .messaging-desktop-app .desktop-header__status-center { display: none; }
+  .messaging-desktop-app .desktop-body { min-height: calc(100dvh - 64px); overflow: visible; }
+}

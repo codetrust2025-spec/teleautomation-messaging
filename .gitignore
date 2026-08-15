@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+node_modules/
+dashboard/dist/
+static/
+data/
+!android/app/src/main/java/com/teleautomation/android/data/
+!android/app/src/main/java/com/teleautomation/android/data/**
+!android/app/src/test/java/com/teleautomation/android/data/
+!android/app/src/test/java/com/teleautomation/android/data/**
+*.session
+*.session-journal
+logs/
+local-preview.*.log

@@ -1,0 +1,12 @@
+{
+  "_comment": "Template only — placeholders. Copy to config/staff_directory.json (git-ignored) and fill in real values on the server. See docs/STAFF_DIRECTORY.md.",
+  "persona_name": "STAFF_MEMBER_0",
+  "members": {
+    "senior_tech":    {"name": "STAFF_MEMBER_1", "phone": "9000000001",      "whatsapp": "https://wa.me/919000000001"},
+    "data_lead":      {"name": "STAFF_MEMBER_2", "phone": "+91 90000 00002", "whatsapp": "https://wa.me/919000000002"},
+    "react_lead_a":   {"name": "STAFF_MEMBER_3", "phone": "+91 90000 00003", "whatsapp": "https://wa.me/919000000003"},
+    "react_lead_b":   {"name": "STAFF_MEMBER_4", "phone": "+91 90000 00004", "whatsapp": "https://wa.me/919000000004"},
+    "devops_lead":    {"name": "STAFF_MEMBER_5", "phone": "+91 90000 00005", "whatsapp": "https://wa.me/919000000005"},
+    "operator_extra": {"name": "STAFF_MEMBER_6", "phone": "9000000006",      "whatsapp": ""}
+  }
+}

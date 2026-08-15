@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Base XML theme used before the Compose content is set. Material 3 colors are
+        applied at runtime by TeleAutomationTheme; this only needs to be a no-action-bar
+        theme compatible with ComponentActivity (no AppCompat dependency required).
+    -->
+    <style name="Theme.TeleAutomation" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

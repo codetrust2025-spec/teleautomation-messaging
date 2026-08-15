@@ -1,0 +1,710 @@
+/**
+ * TeleAutomation — responsive layout layer (CSS only).
+ * Loads after index.css. Does not change application logic.
+ *
+ * Breakpoints:
+ *   Mobile      max-width: 767px
+ *   Tablet      768px – 1023px
+ *   Laptop      1024px – 1439px
+ *   Desktop     1440px – 1919px
+ *   Ultra-wide  min-width: 1920px
+ */
+
+:root {
+  --ta-mobile-max: 767px;
+  --ta-tablet-min: 768px;
+  --ta-tablet-max: 1023px;
+  --ta-laptop-min: 1024px;
+  --ta-laptop-max: 1439px;
+  --ta-desktop-min: 1440px;
+  --ta-ultra-min: 1920px;
+  --ta-touch-min: 44px;
+  --ta-shell-max-ultra: min(100%, 2560px);
+}
+
+/* ── Global: prevent horizontal scroll ─────────────────────────────────── */
+html {
+  overflow-x: clip;
+}
+
+body,
+#root,
+.app-shell,
+.dashboard-resize-wrap,
+.dashboard-grid,
+.dashboard-grid--auto,
+.inbox-root,
+.crm-root,
+.logs-fullpage {
+  max-width: 100%;
+}
+
+/* Main view area must fill space below the header (avoids empty band). */
+.app-shell > .dashboard-resize-wrap,
+.app-shell > .dashboard-grid--auto,
+.app-shell > .inbox-root,
+.app-shell > .crm-root,
+.app-shell > .logs-fullpage {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Responsive tables: wrap any bare table in scroll container via class */
+.responsive-table-scroll,
+.fleet-health-table-wrap,
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.fleet-health-table {
+  min-width: min(100%, 520px);
+}
+
+/* ── Mobile phones (320px – 767px) ─────────────────────────────────────── */
+@media (max-width: 767px) {
+  .app-shell {
+    padding-left: max(10px, var(--safe-left));
+    padding-right: max(10px, var(--safe-right));
+    padding-top: max(10px, var(--safe-top));
+    padding-bottom: max(10px, var(--safe-bottom));
+  }
+
+  .app-header {
+    gap: 8px;
+  }
+
+  .app-header-title h1 {
+    font-size: clamp(16px, 4.5vw, 18px);
+  }
+
+  .app-view-nav {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px;
+    padding-bottom: 2px;
+  }
+
+  .app-view-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-view-nav-btn {
+    flex: 0 0 auto;
+    min-width: max(var(--ta-touch-min), 4.5rem);
+    min-height: var(--ta-touch-min);
+    font-size: 12px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .app-header-actions .app-header-btn:not(.btn--xs) {
+    min-height: var(--ta-touch-min);
+  }
+
+  .chip,
+  .posting-mode-btn,
+  .segmented-control button {
+    min-height: var(--ta-touch-min);
+  }
+
+  .inbox-root,
+  .crm-root {
+    margin: 0 0 8px;
+    border-radius: var(--radius-md, 10px);
+  }
+
+  /* Inbox: single-pane list → chat (iPhone) */
+  .app-shell--view-inbox {
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .app-shell--view-inbox > .inbox-root {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .tg-inbox-shell .tg-chat-pane,
+  .tg-inbox-shell .crm-chat-window,
+  .tg-inbox-shell .inbox-chat-panel {
+    display: none;
+  }
+
+  .tg-inbox-shell.inbox-layout--with-selected .tg-chat-pane,
+  .tg-inbox-shell.inbox-layout--with-selected .crm-chat-window,
+  .tg-inbox-shell.inbox-layout--with-selected .inbox-chat-panel,
+  .tg-inbox-shell.crm-layout--with-selected .tg-chat-pane,
+  .tg-inbox-shell.crm-layout--with-selected .crm-chat-window,
+  .tg-inbox-shell.crm-layout--with-selected .inbox-chat-panel {
+    display: flex !important;
+    flex-direction: column;
+    position: absolute;
+    inset: 0;
+    z-index: 12;
+    height: 100%;
+    min-height: 0;
+    background: var(--bg);
+  }
+
+  .tg-inbox-shell.inbox-layout--with-selected .tg-sidebar,
+  .tg-inbox-shell.crm-layout--with-selected .tg-sidebar,
+  .tg-inbox-shell.inbox-layout--with-selected .inbox-list-panel,
+  .tg-inbox-shell.crm-layout--with-selected .inbox-list-panel {
+    display: none !important;
+  }
+
+  .inbox-chat-back-btn,
+  .tg-chat-back {
+    display: inline-flex !important;
+  }
+
+  .inbox-toolbar,
+  .crm-inbox-toolbar,
+  .crm-toolbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .inbox-toolbar h2 {
+    font-size: clamp(15px, 4vw, 17px);
+  }
+
+  .crm-inbox-toolbar-actions,
+  .inbox-chat-header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .crm-inbox-toolbar-actions .btn,
+  .inbox-chat-header-actions .btn {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    min-height: var(--ta-touch-min);
+  }
+
+  .posting-mode-panel__modes,
+  .posting-mode-panel__source-types {
+    width: 100%;
+  }
+
+  .posting-mode-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .posting-mode-panel__form .input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .acct-fleet-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 88px), 1fr));
+  }
+
+  .acct-v3-card,
+  .account-card {
+    max-width: 100%;
+  }
+
+  .stats-grid--metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .perf-chart-label-row {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .perf-chart-name,
+  .perf-chart-slot {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .progress-hub-pin,
+  .logs-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .message-editor,
+  .groups-upload {
+    max-width: 100%;
+  }
+
+  /* Setup column: avoid scroll-within-scroll on iPhone (use document scroll only) */
+  .setup-column,
+  .setup-column-panels,
+  .setup-column-panel,
+  .setup-column-panel__scroll {
+    overflow: visible !important;
+    max-height: none !important;
+    min-height: auto !important;
+  }
+
+  .setup-column-panel--active {
+    display: block !important;
+  }
+
+  .dashboard-column--left,
+  .dashboard-column--left .dashboard-column-body {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  .forward-message-groups__list {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .modal-backdrop,
+  .confirm-backdrop,
+  .crm-modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-card,
+  .confirm-card,
+  .crm-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+    padding-bottom: max(20px, var(--safe-bottom));
+  }
+
+  /* Logs full-page view (nav → Logs) — avoid zero-height flex trap on iOS */
+  .app-shell--view-logs {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+
+  .app-shell--view-logs > .logs-fullpage {
+    flex: 1 1 auto;
+    min-height: auto;
+    height: auto;
+    overflow: visible;
+    width: 100%;
+    max-width: 100%;
+    padding: 8px 0;
+    padding-bottom: max(12px, var(--safe-bottom));
+  }
+
+  .logs-fullpage > *,
+  .logs-fullpage .log-panel-root {
+    flex: 1 1 auto;
+    min-height: auto;
+    height: auto;
+    overflow: visible;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .logs-toolbar-row--filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .logs-toolbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .logs-toolbar-tabs.segmented-control {
+    width: 100%;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .logs-toolbar-tabs.segmented-control::-webkit-scrollbar {
+    display: none;
+  }
+
+  .logs-toolbar-tabs .btn--segment {
+    flex: 0 0 auto;
+    min-height: var(--ta-touch-min);
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .logs-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .logs-filter-chips {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .logs-filter-chips .segmented-control {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .logs-filter-chips .segmented-control .btn--segment {
+    flex: 1 1 auto;
+    min-width: max(4.5rem, 22%);
+    min-height: var(--ta-touch-min);
+  }
+
+  .logs-account-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .logs-filter-toggle {
+    min-height: var(--ta-touch-min);
+    align-items: center;
+  }
+
+  .logs-scroll {
+    flex: none;
+    width: 100%;
+    max-width: 100%;
+    min-height: clamp(240px, 52dvh, 560px);
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 8px 10px;
+    box-sizing: border-box;
+  }
+
+  .log-line {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 4px 8px;
+    padding: 8px 0;
+    font-size: 11px;
+  }
+
+  .log-line-time {
+    min-width: 0;
+    font-size: 10px;
+  }
+
+  .log-line-event {
+    max-width: min(100%, 140px);
+  }
+
+  .log-line-msg {
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .log-result-line {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 0;
+    font-size: 12px;
+  }
+
+  .log-result-line a {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .log-cycle-body {
+    max-height: none;
+  }
+
+  .cand-earn-chart-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cand-earn-chart-bars {
+    width: 100%;
+  }
+
+  .cand-allexp-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cand-allexp-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cand-allexp-filters .input,
+  .cand-allexp-filters select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* Very small phones (iPhone SE class) */
+@media (max-width: 374px) {
+  .app-header-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .app-header-right-group {
+    width: 100%;
+  }
+
+  .stats-grid--metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .acct-fleet-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .crm-inbox-toolbar-actions .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* ── Tablets (768px – 1023px) ──────────────────────────────────────────── */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .app-shell {
+    padding-left: max(12px, var(--safe-left));
+    padding-right: max(12px, var(--safe-right));
+  }
+
+  .app-header {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+
+  .app-header-right {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .dashboard-column {
+    min-height: clamp(200px, 28svh, 380px);
+  }
+
+  /* Inbox: split list + chat on tablet (override phone single-pane) */
+  .inbox-layout,
+  .crm-layout {
+    flex-direction: row;
+  }
+
+  .inbox-list-panel {
+    display: flex;
+    flex-direction: column;
+    width: clamp(240px, 32vw, 320px);
+    max-height: none;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+  }
+
+  .inbox-chat-panel,
+  .crm-chat-window {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  .crm-layout--with-selected .inbox-list-panel,
+  .crm-layout--with-selected .crm-inbox-list {
+    display: flex;
+  }
+
+  .crm-layout--with-selected .inbox-chat-panel,
+  .crm-layout--with-selected .crm-chat-window {
+    display: flex;
+  }
+
+  .inbox-chat-back-btn {
+    display: none;
+  }
+
+  .inbox-list-panel {
+    flex-shrink: 0;
+  }
+
+  .stats-grid--metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .acct-fleet-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  }
+
+  .modal-card,
+  .confirm-card,
+  .crm-modal {
+    max-width: min(92vw, 560px);
+  }
+
+  .posting-mode-panel__form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+  }
+
+  .posting-mode-panel__form .input {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+}
+
+/* ── Laptops (1024px – 1439px) ─────────────────────────────────────────── */
+@media (min-width: 1024px) and (max-width: 1439px) {
+  .inbox-list-panel {
+    width: clamp(280px, 28vw, 360px);
+  }
+
+  .crm-lead-panel {
+    width: clamp(220px, 20vw, 300px);
+  }
+
+  .dashboard-resize-wrap--two-col > .dashboard-resize-row {
+    padding-right: clamp(16px, 2vw, 32px);
+  }
+
+  .perf-chart-list {
+    max-width: 100%;
+  }
+
+  .modal-card {
+    max-width: min(640px, 88vw);
+  }
+}
+
+/* ── Desktop (1440px – 1919px) ─────────────────────────────────────────── */
+@media (min-width: 1440px) and (max-width: 1919px) {
+  .app-shell {
+    padding-left: max(clamp(12px, 1.2vw, 28px), var(--safe-left));
+    padding-right: max(clamp(12px, 1.2vw, 28px), var(--safe-right));
+  }
+
+  .inbox-messages-inner {
+    max-width: 900px;
+  }
+
+  .inbox-list-panel {
+    width: clamp(300px, 24vw, 400px);
+  }
+}
+
+/* ── Ultra-wide (1920px+) ────────────────────────────────────────────────── */
+@media (min-width: 1920px) {
+  .app-shell {
+    width: 100%;
+    max-width: var(--ta-shell-max-ultra);
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: max(24px, var(--safe-left));
+    padding-right: max(24px, var(--safe-right));
+  }
+
+  .inbox-list-panel {
+    width: clamp(340px, 18vw, 480px);
+  }
+
+  .crm-lead-panel {
+    width: clamp(280px, 14vw, 400px);
+  }
+
+  .inbox-messages-inner {
+    max-width: 960px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .dashboard-grid:not(.dashboard-grid--auto) {
+    gap: clamp(12px, 1vw, 20px);
+  }
+
+  .modal-card {
+    max-width: 720px;
+  }
+}
+
+/* ── Touch / coarse pointer (phones & tablets) ─────────────────────────── */
+@media (hover: none), (pointer: coarse) {
+  .inbox-conv-item,
+  .crm-conv-item,
+  .acct-fleet-tile,
+  .account-tab {
+    min-height: var(--ta-touch-min);
+  }
+
+  .column-resize-handle {
+    min-width: 12px;
+  }
+
+  .inbox-compose .btn,
+  .crm-compose .btn,
+  .crm-send-btn {
+    min-height: var(--ta-touch-min);
+    min-width: var(--ta-touch-min);
+  }
+}
+
+/* ── Landscape phones: short viewport ──────────────────────────────────── */
+@media (max-width: 767px) and (max-height: 500px) and (orientation: landscape) {
+  .app-header {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .app-header-sub {
+    display: none;
+  }
+
+  .inbox-chat-panel,
+  .crm-chat-window {
+    min-height: 0;
+  }
+
+  .inbox-messages,
+  .crm-messages {
+    min-height: 120px;
+  }
+}
+
+/* ── Print (hide chrome) ───────────────────────────────────────────────── */
+@media print {
+  .app-header,
+  .column-resize-handle,
+  .app-boot-overlay {
+    display: none !important;
+  }
+
+  .app-shell {
+    height: auto;
+    overflow: visible;
+  }
+}

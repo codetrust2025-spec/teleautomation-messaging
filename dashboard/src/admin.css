@@ -1,0 +1,326 @@
+/* Karthik admin dashboard (modular App — was only in teleautomation bundle) */
+
+.admin-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px clamp(12px, 2vw, 24px) 32px;
+  width: 100%;
+  min-height: 0;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-title {
+  margin: 0;
+  font-size: clamp(22px, 2.5vw, 28px);
+  font-weight: 700;
+  color: var(--text, #e5e7eb);
+}
+
+.admin-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
+}
+
+.admin-tab {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-dim, #94a3b8);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.admin-tab--active {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
+  color: #e5e7eb;
+}
+
+.admin-loading,
+.admin-error {
+  font-size: 14px;
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-error {
+  color: #f87171;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.admin-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.admin-card--wide {
+  grid-column: 1 / -1;
+}
+
+.admin-card--full {
+  grid-column: 1 / -1;
+}
+
+.admin-card h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 10px;
+}
+
+.admin-metrics--compact {
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+}
+
+.admin-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-metric-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-metric-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text, #e5e7eb);
+}
+
+.admin-metric-sub {
+  font-size: 11px;
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-metric--blue .admin-metric-value { color: #60a5fa; }
+.admin-metric--green .admin-metric-value { color: #34d399; }
+.admin-metric--gold .admin-metric-value { color: #fbbf24; }
+.admin-metric--warn .admin-metric-value { color: #fbbf24; }
+.admin-metric--danger .admin-metric-value { color: #f87171; }
+.admin-metric--hot .admin-metric-value { color: #f87171; }
+.admin-metric--warm .admin-metric-value { color: #fb923c; }
+.admin-metric--cold .admin-metric-value { color: #94a3b8; }
+
+.admin-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.admin-list--questions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.admin-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.admin-funnel-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.admin-funnel-label {
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-funnel-track {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.admin-funnel-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 4px;
+}
+
+.admin-funnel-count {
+  font-weight: 600;
+  min-width: 2ch;
+  text-align: right;
+}
+
+.admin-funnel-pct {
+  color: var(--text-dim, #94a3b8);
+  min-width: 3ch;
+  text-align: right;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #94a3b8);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.admin-table tbody td {
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: top;
+}
+
+.admin-table-row--flagged {
+  background: rgba(248, 113, 113, 0.06);
+}
+
+.admin-cell-truncate {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-muted {
+  color: var(--text-dim, #94a3b8);
+  font-size: 12px;
+}
+
+.admin-temp--hot { color: #f87171; }
+.admin-temp--warm { color: #fb923c; }
+.admin-temp--cold { color: #94a3b8; }
+
+.admin-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.admin-kv {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-kv li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.admin-kv li span {
+  color: var(--text-dim, #94a3b8);
+}
+
+.admin-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.admin-event-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.admin-event-type {
+  font-weight: 600;
+  color: #a5b4fc;
+}
+
+.admin-bug-status--open { color: #fbbf24; }
+.admin-bug-status--resolved { color: #34d399; }
+
+.app-shell--view-admin {
+  height: auto !important;
+  min-height: 100dvh;
+  overflow: visible !important;
+}
+
+.app-shell--view-admin > .app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--bg, #0b1020);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+}
