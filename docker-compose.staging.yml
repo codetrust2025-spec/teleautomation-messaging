@@ -1,0 +1,188 @@
+# Isolated staging stack: both split services, each with its own PostgreSQL and
+# its own persistent volumes, behind Caddy for automatic HTTPS and WebSocket
+# proxying.
+#
+# This is the dual-service stack that already passes verification, plus TLS
+# termination and two public hostnames. The application topology is unchanged:
+# peers still address each other by Docker service name on the internal network,
+# and neither service is published directly to the host.
+#
+# Hostnames use sslip.io, which resolves <anything>.<ip>.sslip.io to that IP.
+# That makes real Let's Encrypt certificates obtainable on a bare public IP with
+# no domain purchase and no DNS records, which is what a temporary staging
+# environment needs. Set STAGING_IP to the host's public IPv4 address.
+#
+# Requires: a Docker host with ports 80 and 443 reachable from the internet
+# (Let's Encrypt validates over HTTP-01).
+#
+#   export STAGING_IP=203.0.113.10
+#   export RELEASE_SHA_MARKETING=... RELEASE_SHA_OPERATIONS=...
+#   docker compose -f docker-compose.staging.yml up -d --build
+#
+# Staging only. Never point this at production data, and never reuse a
+# production secret here.
+
+name: teleautomation-staging
+
+x-release: &release
+  RELEASE_BUILT_AT: ${RELEASE_BUILT_AT:-unknown}
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      STAGING_IP: ${STAGING_IP:?set STAGING_IP to the host public IPv4}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./deploy/staging/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # issued certificates must survive restarts
+      - caddy_config:/config
+    depends_on:
+      marketing-api:
+        condition: service_healthy
+      operations-api:
+        condition: service_healthy
+
+  marketing-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: marketing
+      POSTGRES_PASSWORD: ${MARKETING_DB_PASSWORD:?generate a staging-only password}
+      POSTGRES_DB: marketing
+    volumes:
+      - marketing_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketing -d marketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  operations-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: operations
+      POSTGRES_PASSWORD: ${OPERATIONS_DB_PASSWORD:?generate a staging-only password}
+      POSTGRES_DB: operations
+    volumes:
+      - operations_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operations -d operations"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  marketing-migrate:
+    build:
+      context: ../teleautomation-messaging
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_MARKETING:-unknown}
+        <<: *release
+    environment:
+      DATABASE_URL: postgresql://marketing:${MARKETING_DB_PASSWORD}@marketing-db:5432/marketing
+      DASHBOARD_PASSWORD: ${MARKETING_DASHBOARD_PASSWORD}
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on:
+      marketing-db:
+        condition: service_healthy
+    restart: "no"
+
+  operations-migrate:
+    build:
+      context: ../teleautomation-business
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:-unknown}
+        <<: *release
+    environment:
+      DATABASE_URL: postgresql://operations:${OPERATIONS_DB_PASSWORD}@operations-db:5432/operations
+      DASHBOARD_PASSWORD: ${OPERATIONS_DASHBOARD_PASSWORD}
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on:
+      operations-db:
+        condition: service_healthy
+    restart: "no"
+
+  marketing-api:
+    build:
+      context: ../teleautomation-messaging
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_MARKETING:-unknown}
+        VITE_OPERATIONS_PUBLIC_URL: https://operations.${STAGING_IP}.sslip.io
+        <<: *release
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: teleautomation-messaging
+      # Providers stay disabled: staging must not touch live Telegram, Gmail,
+      # WhatsApp or payment endpoints.
+      TELEAUTOMATION_SAFE_UI_MODE: "true"
+      DATABASE_URL: postgresql://marketing:${MARKETING_DB_PASSWORD}@marketing-db:5432/marketing
+      MARKETING_DATA_DIR: /var/lib/teleautomation-marketing
+      OPERATIONS_INTERNAL_URL: http://operations-api:8000
+      OPERATIONS_PUBLIC_URL: https://operations.${STAGING_IP}.sslip.io
+      PUBLIC_BASE_URL: https://marketing.${STAGING_IP}.sslip.io
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?generate a staging-only token}
+      DASHBOARD_USERNAME: ${MARKETING_DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${MARKETING_DASHBOARD_PASSWORD:?generate a staging-only password}
+      DASHBOARD_AUTH_SECRET: ${MARKETING_AUTH_SECRET:?generate a staging-only secret}
+      # Terminated at Caddy, so cookies must be marked secure.
+      DASHBOARD_COOKIE_SECURE: "true"
+    volumes:
+      - marketing_data:/var/lib/teleautomation-marketing
+    depends_on:
+      marketing-db:
+        condition: service_healthy
+      marketing-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  operations-api:
+    build:
+      context: ../teleautomation-business
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:-unknown}
+        VITE_OPERATIONS_PUBLIC_URL: https://operations.${STAGING_IP}.sslip.io
+        VITE_MARKETING_PUBLIC_URL: https://marketing.${STAGING_IP}.sslip.io
+        <<: *release
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: teleautomation-operations
+      TELEAUTOMATION_SAFE_UI_MODE: "true"
+      DATABASE_URL: postgresql://operations:${OPERATIONS_DB_PASSWORD}@operations-db:5432/operations
+      OPERATIONS_DATA_DIR: /var/lib/teleautomation-operations
+      MESSAGING_INTERNAL_URL: http://marketing-api:8000
+      OPERATIONS_PUBLIC_URL: https://operations.${STAGING_IP}.sslip.io
+      MARKETING_PUBLIC_URL: https://marketing.${STAGING_IP}.sslip.io
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      DASHBOARD_USERNAME: ${OPERATIONS_DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${OPERATIONS_DASHBOARD_PASSWORD:?generate a staging-only password}
+      DASHBOARD_AUTH_SECRET: ${OPERATIONS_AUTH_SECRET:?generate a staging-only secret}
+      DASHBOARD_COOKIE_SECURE: "true"
+    volumes:
+      - operations_data:/var/lib/teleautomation-operations
+    depends_on:
+      operations-db:
+        condition: service_healthy
+      operations-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  marketing_data:
+  marketing_db:
+  operations_data:
+  operations_db:
+  caddy_data:
+  caddy_config:
