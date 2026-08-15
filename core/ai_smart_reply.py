@@ -103,8 +103,25 @@ def is_enabled() -> bool:
 
 def health() -> dict:
     """For UI: tells operator whether AI is fully wired up or missing a key."""
-    from core.ai_group_message import is_karthik_group_rewrite_available
-    from core.ai_work_hours import work_hours_status
+    # Neither core.ai_work_hours nor core.ai_group_message exists in this
+    # repository, and neither exists in the monolith either: both imports have
+    # always been broken and took this entire status endpoint down with them.
+    # The llm_gateway and inbox_sweep imports below were already guarded the
+    # same way; these two were simply missed.
+    #
+    # Every value here is one optional capability in a status payload, so an
+    # absent module degrades that field rather than failing the whole request.
+    try:
+        from core.ai_work_hours import work_hours_status
+    except ImportError:
+        def work_hours_status(_cfg) -> dict:
+            return {"available": False}
+
+    try:
+        from core.ai_group_message import is_karthik_group_rewrite_available
+    except ImportError:
+        def is_karthik_group_rewrite_available() -> bool:
+            return False
 
     cfg = get_config()
     out = {
