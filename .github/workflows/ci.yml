@@ -75,25 +75,31 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Dual-service verification SKIPPED: secret PEER_REPO_TOKEN is not set, so the private Operations repository cannot be checked out."
           fi
-      # While the peer's split branch still exists, verify against it: these two
-      # branches merge together, so PR-against-PR is the combination that will
-      # actually be deployed. Checking out the peer's default branch instead
-      # would pair new Marketing code with the pre-split Operations baseline, a
-      # combination that never ships. Once the peer branch merges and is
-      # deleted, this falls back to the default branch on its own.
+      # Paired changes are made on identically named branches in both
+      # repositories and merge together, so when the peer has a branch of the
+      # same name that pair is the combination that will actually ship: verify
+      # against it. Otherwise use the peer's default branch. Checking out the
+      # default branch unconditionally would pair new Marketing code with
+      # whatever Operations happened to have last merged, which for a paired
+      # change is a combination that never ships.
+      #
+      # Matching on the branch name rather than a hardcoded one means this needs
+      # no edit per change, and it falls back on its own once a peer branch
+      # merges and is deleted.
       - name: Resolve peer ref
         id: peerref
         if: steps.peer.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ secrets.PEER_REPO_TOKEN }}
-          PEER_BRANCH: chore/container-stack-hardening
+          PEER_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          if gh api "repos/codetrust2025-spec/teleautomation-business/branches/$PEER_BRANCH" >/dev/null 2>&1; then
+          if [ -n "$PEER_BRANCH" ] \
+             && gh api "repos/codetrust2025-spec/teleautomation-business/branches/$PEER_BRANCH" >/dev/null 2>&1; then
             echo "ref=$PEER_BRANCH" >> "$GITHUB_OUTPUT"
-            echo "::notice::Verifying against peer branch $PEER_BRANCH"
+            echo "::notice::Verifying against matching peer branch $PEER_BRANCH"
           else
             echo "ref=" >> "$GITHUB_OUTPUT"
-            echo "::notice::Peer branch $PEER_BRANCH is gone; verifying against the peer default branch"
+            echo "::notice::No peer branch named '$PEER_BRANCH'; verifying against the peer default branch"
           fi
       - uses: actions/checkout@v4
         if: steps.peer.outputs.available == 'true'
