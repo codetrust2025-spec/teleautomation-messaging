@@ -1,0 +1,161 @@
+# Production stack for the split. PREPARED, NOT DEPLOYED.
+#
+#   docker compose -f docker-compose.production.yml --env-file .env.production up -d
+#
+# Deliberately close to the staging stack that has been verified, because the
+# value of staging evidence drops with every difference between the two. What
+# differs, and only what differs:
+#
+#   - real production hostnames, so the built frontends point at the right peer
+#   - separate loopback ports, so this can be brought up beside the monolith
+#     during cutover without taking a port it is using
+#   - the existing host nginx terminates TLS, as it already does for production
+#
+# The monolith keeps running on its own port and database throughout. This stack
+# does not stop it, migrate it, or share anything with it.
+#
+# Ports are loopback-only. Nothing here is reachable from the internet except
+# through the nginx server blocks in deploy/production/nginx-production.conf.template.
+
+name: teleautomation-production
+
+x-capped-logs: &capped
+  driver: json-file
+  options: { max-size: "50m", max-file: "5" }
+
+services:
+  marketing-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${MARKETING_DB_USER:?}
+      POSTGRES_PASSWORD: ${MARKETING_DB_PASSWORD:?}
+      POSTGRES_DB: ${MARKETING_DB_NAME:?}
+    volumes: [marketing_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    logging: *capped
+
+  operations-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${OPERATIONS_DB_USER:?}
+      POSTGRES_PASSWORD: ${OPERATIONS_DB_PASSWORD:?}
+      POSTGRES_DB: ${OPERATIONS_DB_NAME:?}
+    volumes: [operations_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    logging: *capped
+
+  marketing-migrate:
+    build:
+      context: ../teleautomation-messaging
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_MARKETING:?}
+        VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
+    environment:
+      DATABASE_URL: ${MARKETING_DATABASE_URL:?}
+      DASHBOARD_PASSWORD: ${MARKETING_DASHBOARD_PASSWORD:?}
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on: { marketing-db: { condition: service_healthy } }
+    restart: "no"
+    logging: *capped
+
+  operations-migrate:
+    build:
+      context: ../teleautomation-business
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:?}
+        VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
+        VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
+    environment:
+      DATABASE_URL: ${OPERATIONS_DATABASE_URL:?}
+      DASHBOARD_PASSWORD: ${OPERATIONS_DASHBOARD_PASSWORD:?}
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on: { operations-db: { condition: service_healthy } }
+    restart: "no"
+    logging: *capped
+
+  marketing-api:
+    build:
+      context: ../teleautomation-messaging
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_MARKETING:?}
+        VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: teleautomation-messaging
+      DATABASE_URL: ${MARKETING_DATABASE_URL:?}
+      MARKETING_DATA_DIR: /var/lib/teleautomation-marketing
+      # Peer over the private compose network, never a public hostname: a
+      # service-to-service call has no reason to leave the host, and routing it
+      # through the internet would add TLS, DNS and the proxy to a path that
+      # needs none of them.
+      OPERATIONS_INTERNAL_URL: http://operations-api:8000
+      OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
+      PUBLIC_BASE_URL: https://marketing.teleautomation.online
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?}
+      DASHBOARD_USERNAME: ${MARKETING_DASHBOARD_USERNAME:?}
+      DASHBOARD_PASSWORD: ${MARKETING_DASHBOARD_PASSWORD:?}
+      DASHBOARD_AUTH_SECRET: ${MARKETING_AUTH_SECRET:?}
+      DASHBOARD_COOKIE_SECURE: "true"
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+    ports: ["127.0.0.1:${MARKETING_PORT:-8110}:8000"]
+    volumes:
+      - marketing_data:/var/lib/teleautomation-marketing
+    depends_on:
+      marketing-db: { condition: service_healthy }
+      marketing-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging: *capped
+
+  operations-api:
+    build:
+      context: ../teleautomation-business
+      args:
+        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:?}
+        VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
+        VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: teleautomation-operations
+      DATABASE_URL: ${OPERATIONS_DATABASE_URL:?}
+      OPERATIONS_DATA_DIR: /var/lib/teleautomation-operations
+      MESSAGING_INTERNAL_URL: http://marketing-api:8000
+      OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
+      MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?}
+      DASHBOARD_USERNAME: ${OPERATIONS_DASHBOARD_USERNAME:?}
+      DASHBOARD_PASSWORD: ${OPERATIONS_DASHBOARD_PASSWORD:?}
+      DASHBOARD_AUTH_SECRET: ${OPERATIONS_AUTH_SECRET:?}
+      DASHBOARD_COOKIE_SECURE: "true"
+    ports: ["127.0.0.1:${OPERATIONS_PORT:-8210}:8000"]
+    volumes:
+      - operations_data:/var/lib/teleautomation-operations
+    depends_on:
+      operations-db: { condition: service_healthy }
+      operations-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging: *capped
+
+volumes:
+  marketing_data:
+  marketing_db:
+  operations_data:
+  operations_db:

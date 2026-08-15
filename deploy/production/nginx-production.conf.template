@@ -1,0 +1,138 @@
+# Production reverse proxy for the split.
+#
+# Three hostnames, three server blocks, one purpose each:
+#   teleautomation.online             -> static entry page only
+#   marketing.teleautomation.online   -> Marketing service
+#   operations.teleautomation.online  -> Operations service
+#
+# The root block serves files. It must never proxy to either application:
+# routing both origins through one hostname is how the monolith's coupling would
+# creep back, and it would also merge their cookie scopes.
+#
+# Cookies are scoped per hostname. Marketing and Operations issue their own
+# session cookies on their own subdomains, so neither can read the other's.
+# Nothing here sets a cookie Domain, which would widen that scope to the parent
+# and undo the separation.
+#
+# Prepared, NOT installed. Applying this replaces how teleautomation.online is
+# served and is a production cutover action requiring explicit authorisation.
+#
+# $connection_upgrade comes from conf.d/ws_upgrade.conf, which already exists on
+# the host. Without the Upgrade/Connection headers below nginx silently drops
+# WebSocket upgrades, and the failure only shows once a proxy is in front.
+
+# ---------------------------------------------------------------------------
+# Root: entry page
+# ---------------------------------------------------------------------------
+server {
+    listen 443 ssl http2;
+    server_name teleautomation.online www.teleautomation.online;
+
+    ssl_certificate     /etc/letsencrypt/live/teleautomation.online/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/teleautomation.online/privkey.pem;
+
+    root /srv/teleautomation-landing;
+    index index.html;
+
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Certbot renewal must keep working from the root host.
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+}
+
+server {
+    listen 80;
+    server_name teleautomation.online www.teleautomation.online;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+# ---------------------------------------------------------------------------
+# Marketing
+# ---------------------------------------------------------------------------
+server {
+    listen 443 ssl http2;
+    server_name marketing.teleautomation.online;
+
+    ssl_certificate     /etc/letsencrypt/live/marketing.teleautomation.online/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/marketing.teleautomation.online/privkey.pem;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    client_max_body_size 25m;   # group-list and media uploads
+
+    # Internal service routes are for the peer service over the private network,
+    # never for the public internet. The application also rejects them without a
+    # token; this is defence in depth, not the only control.
+    location ^~ /internal/ { return 404; }
+
+    location / {
+        proxy_pass http://127.0.0.1:__MARKETING_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+}
+
+server {
+    listen 80;
+    server_name marketing.teleautomation.online;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+# ---------------------------------------------------------------------------
+# Operations
+# ---------------------------------------------------------------------------
+server {
+    listen 443 ssl http2;
+    server_name operations.teleautomation.online;
+
+    ssl_certificate     /etc/letsencrypt/live/operations.teleautomation.online/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/operations.teleautomation.online/privkey.pem;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # Payment proofs, resumes and Data Room documents.
+    client_max_body_size 50m;
+
+    location ^~ /internal/ { return 404; }
+
+    location / {
+        proxy_pass http://127.0.0.1:__OPERATIONS_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+}
+
+server {
+    listen 80;
+    server_name operations.teleautomation.online;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}

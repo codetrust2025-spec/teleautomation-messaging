@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tele-Automation</title>
+<meta name="robots" content="noindex, nofollow">
+<!--
+  Entry layer only.
+
+  This page holds no application logic, no data, and no session. It links to two
+  independently deployed applications and nothing else. It deliberately does not
+  proxy, embed or aggregate them: recombining Marketing and Operations behind one
+  origin is precisely what the split exists to prevent, and would quietly
+  reintroduce the coupling that made the monolith hard to release.
+
+  Nothing operational is exposed here, because this page is reachable without
+  authentication. Both destinations authenticate independently.
+-->
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --line: #262c35;
+    --text: #e8ecf1; --dim: #98a2b3; --accent: #4c8dff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f8fa; --panel:#fff; --line:#e3e8ef; --text:#111827; --dim:#5b6572; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid; place-items: center; padding: 24px;
+  }
+  main { width: 100%; max-width: 660px; }
+  header { text-align: center; margin-bottom: 32px; }
+  .mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 52px; height: 52px; border-radius: 14px;
+    background: var(--accent); color: #fff; font-size: 26px; margin-bottom: 14px;
+  }
+  h1 { margin: 0 0 6px; font-size: 1.6rem; letter-spacing: -0.01em; }
+  .sub { margin: 0; color: var(--dim); font-size: 0.95rem; }
+  .apps { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 560px) { .apps { grid-template-columns: 1fr; } }
+  a.app {
+    display: block; padding: 20px; border-radius: 14px; text-decoration: none;
+    background: var(--panel); border: 1px solid var(--line); color: inherit;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  a.app:hover, a.app:focus-visible { border-color: var(--accent); transform: translateY(-2px); }
+  a.app:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .app h2 { margin: 0 0 6px; font-size: 1.1rem; }
+  .app p { margin: 0; color: var(--dim); font-size: 0.88rem; }
+  .go { margin-top: 14px; color: var(--accent); font-size: 0.85rem; font-weight: 600; }
+  footer { margin-top: 30px; text-align: center; color: var(--dim); font-size: 0.78rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="mark" aria-hidden="true">⚡</div>
+    <h1>Tele-Automation</h1>
+    <p class="sub">Choose a workspace. Each signs in separately.</p>
+  </header>
+
+  <div class="apps">
+    <a class="app" href="https://marketing.teleautomation.online">
+      <h2>Marketing</h2>
+      <p>Telegram accounts, groups, forwarding, campaigns, inbox and CRM.</p>
+      <div class="go">Open Marketing →</div>
+    </a>
+
+    <a class="app" href="https://operations.teleautomation.online">
+      <h2>Operations</h2>
+      <p>Candidates, bookings, interviews, payments, reconciliation and Data Room.</p>
+      <div class="go">Open Operations →</div>
+    </a>
+  </div>
+
+  <footer>Tele-Automation</footer>
+</main>
+</body>
+</html>
