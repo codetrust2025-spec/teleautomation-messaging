@@ -24,7 +24,7 @@ jobs:
       - name: Verify migrations are idempotent
         run: test -z "$(python -m core.migrations.runner)"
       - run: python -m compileall -q core services workers features events messaging main.py
-      - run: pytest -q
+      - run: python -m pytest -q
       - uses: actions/setup-node@v4
         with: {node-version: "22", cache: npm, cache-dependency-path: dashboard/package-lock.json}
       - run: npm ci
@@ -39,6 +39,74 @@ jobs:
       - run: docker compose build
       - run: docker compose up -d
         env: {TELEAUTOMATION_SAFE_UI_MODE: "true"}
-      - run: curl --fail --retry 12 --retry-delay 2 http://127.0.0.1:8100/health
+      - name: Health check
+        run: curl --fail --retry 24 --retry-delay 5 --retry-all-errors http://127.0.0.1:8100/health
+      - name: Migrations ran inside the container and are idempotent
+        run: |
+          docker compose run --rm -T migrate | tee /tmp/second-run.txt
+          test ! -s /tmp/second-run.txt
+      - name: Persistence survives a container restart
+        run: |
+          docker compose exec -T db psql -U marketing -d marketing -c \
+            "CREATE TABLE IF NOT EXISTS ci_persistence_probe(id int primary key); \
+             INSERT INTO ci_persistence_probe VALUES (1) ON CONFLICT DO NOTHING;"
+          docker compose restart
+          curl --fail --retry 24 --retry-delay 5 --retry-all-errors http://127.0.0.1:8100/health
+          test "$(docker compose exec -T db psql -U marketing -d marketing -tAc \
+            'SELECT count(*) FROM ci_persistence_probe' | tr -d '[:space:]')" = "1"
       - if: always()
         run: docker compose down -v
+
+  # True dual-service verification needs BOTH private repositories checked out.
+  # It runs only when a token with read access to the peer repository is
+  # configured; otherwise it reports why it was skipped instead of silently
+  # passing. See scripts/dual_service_test.sh for the checks performed.
+  dual-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: teleautomation-messaging}
+      - name: Check peer access
+        id: peer
+        run: |
+          if [ -n "${{ secrets.PEER_REPO_TOKEN }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Dual-service verification SKIPPED: secret PEER_REPO_TOKEN is not set, so the private Operations repository cannot be checked out."
+          fi
+      # While the peer's split branch still exists, verify against it: these two
+      # branches merge together, so PR-against-PR is the combination that will
+      # actually be deployed. Checking out the peer's default branch instead
+      # would pair new Marketing code with the pre-split Operations baseline, a
+      # combination that never ships. Once the peer branch merges and is
+      # deleted, this falls back to the default branch on its own.
+      - name: Resolve peer ref
+        id: peerref
+        if: steps.peer.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PEER_REPO_TOKEN }}
+          PEER_BRANCH: chore/container-stack-hardening
+        run: |
+          if gh api "repos/codetrust2025-spec/teleautomation-business/branches/$PEER_BRANCH" >/dev/null 2>&1; then
+            echo "ref=$PEER_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "::notice::Verifying against peer branch $PEER_BRANCH"
+          else
+            echo "ref=" >> "$GITHUB_OUTPUT"
+            echo "::notice::Peer branch $PEER_BRANCH is gone; verifying against the peer default branch"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.peer.outputs.available == 'true'
+        with:
+          repository: codetrust2025-spec/teleautomation-business
+          ref: ${{ steps.peerref.outputs.ref }}
+          token: ${{ secrets.PEER_REPO_TOKEN }}
+          path: teleautomation-business
+      - name: Run dual-service verification
+        if: steps.peer.outputs.available == 'true'
+        working-directory: teleautomation-messaging
+        run: bash scripts/dual_service_test.sh
+      - name: Tear down
+        if: always() && steps.peer.outputs.available == 'true'
+        working-directory: teleautomation-messaging
+        run: docker compose -f docker-compose.dual.yml down -v

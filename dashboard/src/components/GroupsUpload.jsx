@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react'
-import * as XLSX from 'xlsx'
+import { extractXlsxText, WorkbookError, MAX_FILE_BYTES } from '../lib/xlsxText.js'
 import { API } from '../config.js'
 import { ButtonContent, OverlayLoader } from '../Loader.jsx'
 import { useConfirm } from '../context/ConfirmContext.jsx'
@@ -17,6 +17,9 @@ export function GroupsUpload({ currentTotal, onUpdated, listSummary }) {
   const [applying, setApplying] = useState(false)
   const [uploadMode, setUploadMode] = useState('merge')
   const fileRef = useRef()
+  // Without this the replace-list guard fell through to window.confirm, which
+  // renders the options object as "[object Object]".
+  const confirm = useConfirm()
 
   const HEADER_WORDS = new Set([
     'username', 'user', 'group', 'groups', 'channel', 'channels', 'name', 'telegram', 'link', 'url',
@@ -51,13 +54,23 @@ export function GroupsUpload({ currentTotal, onUpdated, listSummary }) {
     const name = file.name.toLowerCase()
     const done = () => setParsingFile(false)
 
-    if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv')) {
+    if (file.size > MAX_FILE_BYTES) {
+      setError(`File is too large. The limit is ${Math.round(MAX_FILE_BYTES / (1024 * 1024))} MB.`)
+      done()
+      return
+    }
+
+    if (name.endsWith('.xls')) {
+      setError('Legacy .xls files are not supported. Open it in Excel or Google Sheets and re-save as .xlsx or .csv.')
+      done()
+      return
+    }
+
+    if (name.endsWith('.xlsx')) {
       const reader = new FileReader()
       reader.onload = (e) => {
         try {
-          const wb = XLSX.read(e.target.result, { type: 'array' })
-          const ws = wb.Sheets[wb.SheetNames[0]]
-          const rows = XLSX.utils.sheet_to_csv(ws)
+          const rows = extractXlsxText(e.target.result)
           const { valid, skippedInvalid, tokenCount } = extractGroupsFromText(rows)
           setPreview(valid)
           setStatus(
@@ -66,7 +79,7 @@ export function GroupsUpload({ currentTotal, onUpdated, listSummary }) {
             (tokenCount > valid.length + skippedInvalid ? ` · ${tokenCount - valid.length - skippedInvalid} duplicates` : '')
           )
         } catch (err) {
-          setError('Failed to parse file: ' + err.message)
+          setError(err instanceof WorkbookError ? err.message : 'Failed to parse file: ' + err.message)
         } finally {
           done()
         }
@@ -87,7 +100,7 @@ export function GroupsUpload({ currentTotal, onUpdated, listSummary }) {
       reader.onerror = () => { setError('Failed to read file'); done() }
       reader.readAsText(file)
     } else {
-      setError('Unsupported file type. Use .xlsx, .xls, .csv, or .txt')
+      setError('Unsupported file type. Use .xlsx, .csv, or .txt')
       done()
     }
   }
@@ -214,8 +227,8 @@ export function GroupsUpload({ currentTotal, onUpdated, listSummary }) {
           >
             <div className="drop-zone-icon">📁</div>
             <p>Drop file or <strong>browse</strong></p>
-            <span className="field-hint">.xlsx, .xls, .csv, .txt</span>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.txt" className="sr-only" onChange={e => e.target.files[0] && parseFile(e.target.files[0])} />
+            <span className="field-hint">.xlsx, .csv, .txt</span>
+            <input ref={fileRef} type="file" accept=".xlsx,.csv,.txt" className="sr-only" onChange={e => e.target.files[0] && parseFile(e.target.files[0])} />
           </div>
 
           <div className="divider-label">Or paste usernames</div>

@@ -1,4 +1,35 @@
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: marketing
+      POSTGRES_PASSWORD: marketing
+      POSTGRES_DB: marketing
+    volumes:
+      - marketing_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketing -d marketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: the API image only runs uvicorn, so the schema is applied here
+  # rather than on every worker start.
+  migrate:
+    build:
+      context: .
+      args:
+        VITE_OPERATIONS_PUBLIC_URL: ${OPERATIONS_PUBLIC_URL:-}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://marketing:marketing@db:5432/marketing
+    command: ["python", "-m", "core.migrations.runner"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -7,9 +38,19 @@ services:
     env_file: .env
     environment:
       TELEAUTOMATION_SAFE_UI_MODE: ${TELEAUTOMATION_SAFE_UI_MODE:-false}
+      DATABASE_URL: postgresql://marketing:marketing@db:5432/marketing
+      MARKETING_DATA_DIR: /var/lib/teleautomation-marketing
+      # Service discovery, never a container-local loopback address. Overridden
+      # by the dual-service stack to point at the real Operations container.
+      OPERATIONS_INTERNAL_URL: ${OPERATIONS_INTERNAL_URL:-http://operations-api:8000}
     ports: ["127.0.0.1:8100:8000"]
     volumes:
       - marketing_data:/var/lib/teleautomation-marketing
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
@@ -19,3 +60,4 @@ services:
 
 volumes:
   marketing_data:
+  marketing_db:
