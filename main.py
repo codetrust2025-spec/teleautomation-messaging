@@ -1269,10 +1269,19 @@ async def get_group_lists(slot: str | None = None):
     lists = build_group_lists(target)
     w = registry.get_worker(target)
     st = w.state
-    cycle_success = list(st.success_list)
+    # AccountState stores these per posting mode as campaign_/forwarding_ lists.
+    # Bare success_list/failed_list exist only as keys in the snapshot dict that
+    # AccountState builds, never as attributes, so reading them off the object
+    # raises AttributeError. This endpoint had no caller until Groups Upload was
+    # restored, which is why the 500 only appeared once the UI could reach it.
+    cycle_success = list(getattr(st, "campaign_success_list", None) or [])
+    raw_failed = (
+        list(getattr(st, "campaign_failed_list", None) or [])
+        or list(getattr(st, "forwarding_failed_list", None) or [])
+    )
     cycle_failed = [
         {"group": x.get("group", ""), "reason": x.get("reason", "")}
-        for x in st.failed_list
+        for x in raw_failed
         if isinstance(x, dict)
     ]
 
