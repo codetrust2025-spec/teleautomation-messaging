@@ -37,6 +37,12 @@ services:
     environment:
       STAGING_IP: ${STAGING_IP:?set STAGING_IP to the host public IPv4}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      # Composed here rather than in the Caddyfile: Caddy cannot nest one
+      # placeholder inside another's default value. Left unset in real staging,
+      # where the sslip.io form applies; CI overrides with http:// addresses so
+      # the same Caddyfile can be exercised without a public IP.
+      MARKETING_SITE: ${MARKETING_SITE:-marketing.${STAGING_IP}.sslip.io}
+      OPERATIONS_SITE: ${OPERATIONS_SITE:-operations.${STAGING_IP}.sslip.io}
     volumes:
       - ./deploy/staging/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data          # issued certificates must survive restarts
