@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AccountPanel } from './components/AccountPanel.jsx'
+import { GroupsUpload } from './components/GroupsUpload.jsx'
+import { FleetDefaultsPanel } from './components/FleetDefaultsPanel.jsx'
+import { ForwardMessagePanel } from './components/ForwardMessagePanel.jsx'
+import { ChangePasswordModal } from './components/ChangePasswordModal.jsx'
 import { InboxPanel } from './components/InboxPanel.jsx'
 import { KnowledgeAssistantPanel } from './components/KnowledgeAssistantPanel.jsx'
 import { AdminPanel } from './components/AdminPanel.jsx'
@@ -14,7 +18,10 @@ import {
   WORKSPACE_FORWARDING,
 } from './utils/workspaceMode.js'
 import { useAuth } from './context/AuthContext.jsx'
+import { useConfirm } from './context/ConfirmContext.jsx'
 import { GlobalNotificationSounds } from './notifications/GlobalNotificationSounds.jsx'
+import { IncomingCallModal } from './components/crm/IncomingCallModal.jsx'
+import { notifyIncomingCall, notifyCallEnded } from './notifications/notificationEvents.js'
 import { operationsUrl } from './config.js'
 
 const EMPTY_STATE = {
@@ -58,6 +65,7 @@ function modeForView(view) {
 
 export default function App() {
   const auth = useAuth()
+  const confirm = useConfirm()
   const [view, setView] = useState('dashboard')
   const [state, setState] = useState(EMPTY_STATE)
   const [inbox, setInbox] = useState({ slots: {} })
@@ -69,6 +77,9 @@ export default function App() {
   const [headerUserOpen, setHeaderUserOpen] = useState(false)
   const [logTab, setLogTab] = useState('logs')
   const [logScope, setLogScope] = useState('all')
+  const [groupsMeta, setGroupsMeta] = useState({ total: 0, summary: null })
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [incomingCall, setIncomingCall] = useState(null)
   const [theme, setTheme] = useState('dark')
   const headerUserRef = useRef(null)
   const liveQueue = useRef([])
@@ -101,7 +112,23 @@ export default function App() {
     socket.onerror = () => setConnected(false)
     socket.onmessage = event => {
       try {
-        liveQueue.current.push(JSON.parse(event.data))
+        const data = JSON.parse(event.data)
+        // The backend still emits incoming_call from phone_call_service. Without
+        // this branch the call neither rings nor surfaces anywhere.
+        if (data.type === 'incoming_call') {
+          if (data.event === 'ringing' && data.call && data.slot) {
+            notifyIncomingCall({ callId: data.call?.call_id })
+            setIncomingCall({ ...data.call, slot: data.slot })
+          } else if (data.event === 'ended') {
+            notifyCallEnded()
+            setIncomingCall(prev => {
+              if (!prev) return null
+              if (data.call?.call_id != null && prev.call_id !== data.call.call_id) return prev
+              return null
+            })
+          }
+        }
+        liveQueue.current.push(data)
         setLiveTick(value => value + 1)
       } catch {}
     }
@@ -173,6 +200,34 @@ export default function App() {
     return result?.slot || ''
   }
 
+  // Group master-list totals feed the Groups panel in the forwarding and
+  // campaign workspaces. Both post to the same master list, so it is fetched
+  // once here rather than per view.
+  const refreshGroups = useCallback(async () => {
+    try {
+      const [groups, lists] = await Promise.all([
+        api('/groups').catch(() => null),
+        api('/groups/lists').catch(() => null),
+      ])
+      setGroupsMeta({
+        total: groups?.total ?? 0,
+        summary: lists ? { active: lists.active_count, dead: lists.dead_count } : null,
+      })
+    } catch {
+      /* the panel degrades to zero counts; upload itself still works */
+    }
+  }, [])
+
+  useEffect(() => { refreshGroups() }, [refreshGroups])
+
+  const groupsPanel = (
+    <GroupsUpload
+      currentTotal={groupsMeta.total}
+      listSummary={groupsMeta.summary}
+      onUpdated={() => { refreshGroups(); refresh() }}
+    />
+  )
+
   const accountPanel = (
     <AccountPanel
       state={state}
@@ -203,6 +258,41 @@ export default function App() {
 
   let content = accountPanel
   let bodyClass = 'desktop-body messaging-body'
+  if (view === 'forwarding' || view === 'campaigns') {
+    // Group master list and fleet-wide defaults sit alongside the accounts in
+    // the two workspaces that actually post to groups.
+    content = (
+      <>
+        {groupsPanel}
+        <FleetDefaultsPanel
+          workspaceMode={workspaceForView(view)}
+          loggedInCount={loggedInSlots.length}
+          onUpdated={refresh}
+        />
+        {view === 'forwarding' && activeAccount && (
+          <ForwardMessagePanel
+            slot={activeAccount}
+            job={state.forward_message_jobs?.[activeAccount]}
+            workerRunning={Boolean(state.account_states?.[activeAccount]?.running)}
+            loggedIn={loggedInSlots.includes(activeAccount)}
+            postingModeConfig={state.posting_modes?.[activeAccount]}
+          />
+        )}
+        {accountPanel}
+      </>
+    )
+  } else if (view === 'settings') {
+    content = (
+      <>
+        <FleetDefaultsPanel
+          workspaceMode={workspaceForView(view)}
+          loggedInCount={loggedInSlots.length}
+          onUpdated={refresh}
+        />
+        {accountPanel}
+      </>
+    )
+  }
   if (view === 'dashboard') {
     content = (
       <DesktopDashboardHome
@@ -265,6 +355,25 @@ export default function App() {
     bodyClass += ' desktop-body--flush'
     content = (
       <div className="logs-fullpage">
+        {activeAccount && (
+          <div className="logs-fullpage__toolbar">
+            <button
+              type="button"
+              className="desktop-header__icon-btn desktop-header__icon-btn--util"
+              disabled={busy === 'clear-logs'}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Clear logs for this account?',
+                  message: `Stored log history for ${activeAccount} will be removed.`,
+                  confirmLabel: 'Clear logs',
+                  cancelLabel: 'Cancel',
+                  variant: 'warn',
+                })
+                if (ok) act('clear-logs', `/account/${activeAccount}/clear-logs`, { method: 'POST' })
+              }}
+            >Clear logs</button>
+          </div>
+        )}
         <LogPanel
           activeTab={logTab}
           activeAccount={activeAccount}
@@ -323,7 +432,10 @@ export default function App() {
             {anyRunning ? (
               <button type="button" className="desktop-header__bulk desktop-header__bulk--stop" disabled={busy === 'stop-all'} onClick={() => act('stop-all', '/stop', { method: 'POST' })}>■ Stop all</button>
             ) : (
-              <button type="button" className="desktop-header__bulk desktop-header__bulk--start" disabled={!loggedInSlots.length || busy === 'start-all'} onClick={() => act('start-all', '/start', { method: 'POST' })}>▶ Start all</button>
+              <>
+                <button type="button" className="desktop-header__bulk desktop-header__bulk--start" disabled={!loggedInSlots.length || busy === 'start-all'} onClick={() => act('start-all', '/start', { method: 'POST' })}>▶ Start all</button>
+                <button type="button" className="desktop-header__icon-btn desktop-header__icon-btn--util" title="Start the fleet in test mode" disabled={!loggedInSlots.length || busy === 'start-test'} onClick={() => act('start-test', '/start-test', { method: 'POST' })}><span aria-hidden>⚑</span><span className="desktop-header__util-label">Test</span></button>
+              </>
             )}
             <button type="button" className="desktop-header__icon-btn desktop-header__icon-btn--util" title="Download joined groups CSV" onClick={() => window.open('/groups/total-list', '_blank', 'noopener,noreferrer')}><span aria-hidden>▤</span><span className="desktop-header__util-label">List</span></button>
             <button type="button" className="desktop-header__icon-btn" aria-label="Inbox notifications" onClick={() => navigate('inbox')}>🔔{inboxUnreadTotal > 0 && <span className="desktop-header__icon-badge">{inboxUnreadTotal > 99 ? '99+' : inboxUnreadTotal}</span>}</button>
@@ -336,7 +448,10 @@ export default function App() {
                 <p className="desk-user-menu__label">Signed in as</p>
                 <p className="desk-user-menu__name">{displayName}</p>
                 {auth.enabled ? (
-                  <button type="button" className="desk-user-menu__item desk-user-menu__item--danger" role="menuitem" onClick={auth.logout}>Sign out</button>
+                  <>
+                    <button type="button" className="desk-user-menu__item" role="menuitem" onClick={() => { setHeaderUserOpen(false); setChangePasswordOpen(true) }}>Change password</button>
+                    <button type="button" className="desk-user-menu__item desk-user-menu__item--danger" role="menuitem" onClick={auth.logout}>Sign out</button>
+                  </>
                 ) : (
                   <p className="desk-user-menu__hint">Login is not required on this server.</p>
                 )}
@@ -348,6 +463,16 @@ export default function App() {
         {error && <div role="alert" className="app-error messaging-app-error">{error} <button type="button" onClick={refresh}>Retry</button></div>}
         <main className={bodyClass}>{content}</main>
       </div>
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
+
+      <IncomingCallModal
+        call={incomingCall}
+        onDismiss={() => { notifyCallEnded(); setIncomingCall(null) }}
+      />
     </div>
   )
 }

@@ -17,6 +17,9 @@ export function GroupsUpload({ currentTotal, onUpdated, listSummary }) {
   const [applying, setApplying] = useState(false)
   const [uploadMode, setUploadMode] = useState('merge')
   const fileRef = useRef()
+  // Without this the replace-list guard fell through to window.confirm, which
+  // renders the options object as "[object Object]".
+  const confirm = useConfirm()
 
   const HEADER_WORDS = new Set([
     'username', 'user', 'group', 'groups', 'channel', 'channels', 'name', 'telegram', 'link', 'url',
