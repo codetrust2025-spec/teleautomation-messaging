@@ -35,15 +35,17 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | 17 | No critical unresolved defect | **PASS with caveat** | no defect introduced by the split remains open; a class of **inherited** defects is documented and deliberately out of scope |
 | 18 | Responsible operator available | **PASS** | confirmed by the owner 2026-08-16: present for the window and able to authorise rollback |
 
-**Verdict: GO** — all eighteen hard gates pass.
+**Verdict: GO** — all eighteen hard gates pass, and the residual is closed.
 
-One residual, named rather than hidden: the end-to-end rehearsal predates three
-tool changes made on 2026-08-16 (the reference check, the archive destination,
-the quarantine manifest). The affected checks were rerun read-only against
-production and behave correctly, and all three carry behavioural tests, but
-execute + reconcile + validate has not run end to end since. That is about two
-minutes of work on a fresh production-shaped copy and is worth doing inside the
-cutover window before the switch.
+A second, complete production-shaped rehearsal ran on 2026-08-16 against a
+fresh 108 MB read-only export using the current tooling and the validated
+release SHAs. It found three further arithmetic defects — two of which would
+have failed reconciliation during the real cutover — fixed them, and then
+passed every stage: sanitisation audited independently, execute, reconcile,
+validate, idempotent re-run, checkpoint/resume, and rollback. Production was
+untouched and the environment was destroyed afterwards.
+
+Detail: `docs/final-production-rehearsal.md` in the monolith repository.
 
 ### The gate-16 decision, resolved 2026-08-16
 
