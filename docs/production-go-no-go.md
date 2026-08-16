@@ -33,18 +33,39 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | 15 | Provider callback plan | **PASS (prepared)** | three provider-held URLs identified (WhatsApp, Google OAuth, Gmail Pub/Sub); Telegram needs none; **no payment gateway exists**. Re-registration is manual and remains a cutover action |
 | 16 | **Production-shaped migration rehearsal** | **PASS** | ran 2026-08-16 against a read-only 107 MB production export in a disposable container. Found and fixed 4 blocking defects. Final run: sanitisation audited independently (234,634 rows row-by-row, 0 unchanged; 1,873 addresses and 1,533 numbers harvested, 0 survived), migration validated (37 tables at parity, 32 FKs intact, 0 orphans, 0 duplicates, 0 dangling file references), idempotent re-run wrote 0, interrupted run resumed to a PASS, rollback left the monolith intact. Production untouched: `/health` 200 and PM2 restarts unchanged at 3 throughout |
 | 17 | No critical unresolved defect | **PASS with caveat** | no defect introduced by the split remains open; a class of **inherited** defects is documented and deliberately out of scope |
-| 18 | Responsible operator available | **OPEN — yours to confirm** | someone must be present for the window and able to authorise rollback |
+| 18 | Responsible operator available | **PASS** | confirmed by the owner 2026-08-16: present for the window and able to authorise rollback |
 
-**Verdict: NO-GO** on gate 18, plus one owner decision carried over from gate 16.
+**Verdict: GO** — all eighteen hard gates pass.
 
-### Owner decision carried over from gate 16
+One residual, named rather than hidden: the end-to-end rehearsal predates three
+tool changes made on 2026-08-16 (the reference check, the archive destination,
+the quarantine manifest). The affected checks were rerun read-only against
+production and behave correctly, and all three carry behavioural tests, but
+execute + reconcile + validate has not run end to end since. That is about two
+minutes of work on a fresh production-shaped copy and is worth doing inside the
+cutover window before the switch.
 
-`candidates.json` holds 36 candidate records the `candidates_store` table does
-not. The table is demonstrably the live store — every candidate that
-recruitment mail references is in it — so the migration now takes the table and
-does **not** migrate those 36. They are either candidates the product deleted,
-or candidates the PostgreSQL store lost. Deciding which is a business question,
-not a migration one, and it is yours.
+### The gate-16 decision, resolved 2026-08-16
+
+Investigated read-only. Classification: **A=5, B=0, C=0, D=31**. B=0 clears the
+hard blocker — every reference to any of the 36 is a file path inherited by a
+live candidate, and no booking, interview, attendance, mail, BGV, payment or
+audit row belongs to one.
+
+The 31 ambiguous records are quarantined: never created in `candidates_store`,
+so they cannot appear as live candidates, and preserved in `_archive/`, which
+the application never reads. Whether they were retired on purpose or lost in
+the July move to PostgreSQL is still open, but it now costs nothing to leave
+open.
+
+Two tool defects surfaced and were fixed: the broken-reference check was a
+structural no-op (so this gate's "0 broken references" was vacuous — production
+actually has 70, all inherited), and the archive was being written to the path
+the application reads, where a missing `DATABASE_URL` would have promoted the
+superseded mirror over the live store.
+
+Detail: `docs/orphaned-candidate-records-investigation.md` in the monolith
+repository.
 
 ### Corrected after review
 
