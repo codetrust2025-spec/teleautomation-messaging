@@ -56,7 +56,7 @@ is a redirect, not a proxy — it does not recombine the applications.
 | Web push (VAPID) | Marketing | Subscriptions are held by the browser and bound to the VAPID key, not a URL. **Do not regenerate the key** or every existing subscription is invalidated |
 | Ollama / OCR | shared | Outbound only, over the reverse SSH tunnel. Unaffected |
 | `/auth/verify-admin` | both | Internal to each app, not external |
-| Payment providers | Operations | No inbound callback found in the code; verification is upload-and-extract, not webhook-driven. **Confirm against the provider account before relying on this** |
+| Payment providers | Operations | **There is no payment gateway integration at all.** A repo-wide search for razorpay, stripe, payu, phonepe, paytm, cashfree, instamojo, billdesk and ccavenue returns zero integration code in either project. Payment "proofs" are user-uploaded UPI screenshots parsed by OCR/AI. **There is no payment callback to re-point** |
 
 ---
 
@@ -75,9 +75,38 @@ resolve fails at the provider and often rate-limits retries.
 
 ---
 
-## Open question for you
+---
 
-Is there a payment provider webhook configured **outside** this codebase — in a
-provider dashboard rather than in code? The repository shows an upload-and-verify
-flow with no inbound payment callback, but a URL registered directly in a
-provider console would not appear here.
+## Silent-failure mechanisms worth knowing before the window
+
+These were found by reading the handlers rather than the route list, and each
+fails without raising anything.
+
+**WhatsApp returns 200 when disabled.** `is_whatsapp_enabled()` defaults to
+false when `WHATSAPP_ENABLED` is unset (`core/config.py:66`), and the ingest
+route then answers `HTTP 200 {"ignored": "whatsapp_disabled"}`
+(`core/whatsapp_api.py:36`). The BSP reads 200 as delivered and **never
+retries**, so inbound messages are lost permanently with no error on either
+side. The production compose now marks every `WHATSAPP_*` variable required, so
+a missing value stops the deploy rather than silently dropping traffic.
+
+**Web push regenerates its own keys.** With no `WEB_PUSH_VAPID_*` in the
+environment, `vapid_keys()` falls through to `_generate_vapid_keys()` and
+persists a **new** keypair (`features/web_push.py:92-96`). On a fresh volume that
+happens automatically and invalidates every existing browser subscription —
+independently of the hostname change. Both keys are now required.
+
+**Gmail Pub/Sub push cannot authenticate.** `/api/gmail/pubsub/push` is absent
+from `_PUBLIC_EXACT` while `api` is an API root, so an unauthenticated POST from
+Google is rejected before reaching the handler
+(`core/dashboard_auth_vps.py:41-51`). This is **pre-existing, not a split
+regression**, and is currently masked because ingestion is poll-only. It must be
+fixed before Pub/Sub push is enabled, or push delivery will fail closed.
+
+**Operations recruitment alerts are already dark.**
+`services/recruitment_notifications.py:9,16` imports `features.web_push`, which
+does not exist in Operations, and both call sites swallow the `ImportError` with
+`except Exception: pass`. Recruitment-detection and mailbox-failure alerts
+therefore never fire. Slot and reminder notifications are unaffected — those
+correctly route to Marketing via `services/messaging_client.py`. Inherited, and
+tracked in `docs/migration/latent-missing-imports.md`.

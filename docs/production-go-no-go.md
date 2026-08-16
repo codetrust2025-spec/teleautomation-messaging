@@ -24,12 +24,29 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | 12 | Monitoring | **PASS (prepared)** | `monitor.sh` covers reachability, release identity, both databases, outbox depth and dead-letters, disk, containers, backup freshness |
 | 13 | Cutover procedure with freeze strategy | **PASS (prepared)** | runbook §6, 30-minute budget, 60-minute hard stop |
 | 14 | Rollback procedure | **PASS (prepared)** | runbook §9, proxy-first, monolith retained 14 days |
-| 15 | Provider callback plan | **OPEN** | inventory in progress; each provider-side URL needs manual re-registration |
+| 15 | Provider callback plan | **PASS (prepared)** | three provider-held URLs identified (WhatsApp, Google OAuth, Gmail Pub/Sub); Telegram needs none; **no payment gateway exists**. Re-registration is manual and remains a cutover action |
 | 16 | **Production-shaped migration rehearsal** | **OPEN — BLOCKING** | tooling built and verified against synthetic data; needs a production backup restored to a disposable host, which needs your approval |
 | 17 | No critical unresolved defect | **PASS with caveat** | no defect introduced by the split remains open; a class of **inherited** defects is documented and deliberately out of scope |
 | 18 | Responsible operator available | **OPEN — yours to confirm** | someone must be present for the window and able to authorise rollback |
 
-**Verdict: NO-GO** on gates 15, 16 and 18.
+**Verdict: NO-GO** on gates 16 and 18.
+
+### Corrected after review
+
+An independent inventory found the first draft of `docker-compose.production.yml`
+omitted every provider variable. Three would have failed **silently**:
+
+- `WHATSAPP_*` missing → the ingest route answers `200 {"ignored":
+  "whatsapp_disabled"}`, the BSP records delivery and never retries, and inbound
+  WhatsApp is lost with no error anywhere
+- `WEB_PUSH_VAPID_*` missing → a fresh volume generates a **new** keypair and
+  invalidates every existing push subscription
+- `MAILBOX_CREDENTIAL_ENCRYPTION_KEY` missing → stored mailbox credentials
+  become undecryptable
+
+All are now declared **required** (`${VAR:?}`), so a missing value stops the
+deploy instead of degrading quietly. This is why the compose file is reviewed
+against handler behaviour and not only against `.env.example`.
 
 ---
 

@@ -106,8 +106,33 @@ services:
       DASHBOARD_PASSWORD: ${MARKETING_DASHBOARD_PASSWORD:?}
       DASHBOARD_AUTH_SECRET: ${MARKETING_AUTH_SECRET:?}
       DASHBOARD_COOKIE_SECURE: "true"
-      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
-      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEAUTOMATION_SAFE_UI_MODE: "false"
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?}
+
+      # WhatsApp. Required, not optional: is_whatsapp_enabled() defaults to
+      # false when WHATSAPP_ENABLED is unset (core/config.py:66), and the ingest
+      # route then answers HTTP 200 with ignored=whatsapp_disabled
+      # (core/whatsapp_api.py:36). The BSP reads 200 as delivered and never
+      # retries, so every inbound message is lost with nothing logged as an
+      # error. Marked required so a missing value stops the deploy instead.
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:?}
+      WHATSAPP_BSP: ${WHATSAPP_BSP:-interakt}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:?}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:?}
+      WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN:?}
+      WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:?}
+
+      # Web push. Also required: with no keys and a fresh volume, vapid_keys()
+      # falls through to _generate_vapid_keys() and persists a NEW keypair
+      # (features/web_push.py:92-96), which silently invalidates every existing
+      # browser subscription. These must be the monolith's current values.
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:?}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:?}
+      WEB_PUSH_VAPID_EMAIL: ${WEB_PUSH_VAPID_EMAIL:-}
+
+      PUBLIC_CALL_BASE_URL: ${PUBLIC_CALL_BASE_URL:-https://marketing.teleautomation.online}
+      DASHBOARD_PUBLIC_URL: https://marketing.teleautomation.online
     ports: ["127.0.0.1:${MARKETING_PORT:-8110}:8000"]
     volumes:
       - marketing_data:/var/lib/teleautomation-marketing
@@ -141,6 +166,26 @@ services:
       DASHBOARD_PASSWORD: ${OPERATIONS_DASHBOARD_PASSWORD:?}
       DASHBOARD_AUTH_SECRET: ${OPERATIONS_AUTH_SECRET:?}
       DASHBOARD_COOKIE_SECURE: "true"
+      TELEAUTOMATION_SAFE_UI_MODE: "false"
+
+      # Decrypts stored mailbox credentials. Carried from the monolith, never
+      # regenerated: a new key makes every saved mailbox credential
+      # undecryptable, and the failure looks like the mailboxes were lost.
+      MAILBOX_CREDENTIAL_ENCRYPTION_KEY: ${MAILBOX_CREDENTIAL_ENCRYPTION_KEY:?}
+
+      # Google OAuth and Gmail push. The redirect URI must match what is
+      # registered in the Google console, which moves to this subdomain.
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-https://operations.teleautomation.online/api/candidate-mailboxes/oauth/google/callback}
+      GMAIL_PUBSUB_TOPIC: ${GMAIL_PUBSUB_TOPIC:-}
+      GMAIL_PUBSUB_VERIFICATION_TOKEN: ${GMAIL_PUBSUB_VERIFICATION_TOKEN:-}
+
+      # Gates the recruitment-mail feature surface. Left unset, its routes
+      # answer 404 and Gmail push delivery has nowhere to land.
+      AI_INTERVIEW_OFFER_TRACKING_ENABLED: ${AI_INTERVIEW_OFFER_TRACKING_ENABLED:?}
+      AI_MAILBOX_SYNC_ENABLED: ${AI_MAILBOX_SYNC_ENABLED:?}
+
+      OCR_ENABLED: ${OCR_ENABLED:-false}
+      PAYMENT_ENGINE_V2_ENABLED: ${PAYMENT_ENGINE_V2_ENABLED:-false}
     ports: ["127.0.0.1:${OPERATIONS_PORT:-8210}:8000"]
     volumes:
       - operations_data:/var/lib/teleautomation-operations
