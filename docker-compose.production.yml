@@ -129,8 +129,15 @@ services:
       # falls through to _generate_vapid_keys() and persists a NEW keypair
       # (features/web_push.py:92-96), which silently invalidates every existing
       # browser subscription. These must be the monolith's current values.
-      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:?}
-      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:?}
+      # Left optional on purpose. features/web_push.py vapid_keys() prefers
+      # these, then falls back to DATA_DIR/vapid_keys.json, then GENERATES a new
+      # pair - and a new pair silently invalidates every existing subscription.
+      # The private key is a multi-line PEM, which cannot survive a .env file, so
+      # the key store is carried into the data volume instead and left
+      # authoritative here. Deployment verifies the served public key matches
+      # production before traffic moves.
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
       WEB_PUSH_VAPID_EMAIL: ${WEB_PUSH_VAPID_EMAIL:-}
 
       # Carried from the monolith. Without these the AI surface degrades
