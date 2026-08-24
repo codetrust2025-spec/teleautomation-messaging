@@ -1,6 +1,12 @@
 # Production Go / No-Go
 
-Status at time of writing: **NO-GO** — two hard gates are open. Detail below.
+Status at time of writing: **NO-GO** — one hard gate is open, and one owner
+decision is outstanding. Detail below.
+
+Gate 16 closed on 2026-08-16. It found four blocking defects, all fixed and
+re-verified; see `docs/production-shaped-rehearsal.md` in the monolith
+repository. Read that before authorising a cutover — two of the four would have
+lost data silently, and one would have copied live Telegram session secrets.
 
 A gate is PASS only with evidence. "Looks fine" is not evidence.
 
@@ -11,7 +17,7 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | # | Gate | Status | Evidence |
 |---|---|---|---|
 | 1 | STAGING VERIFIED | **PASS** | Marketing 22/0 and Operations 24/0 authenticated walkthroughs; 16/0 hosted checks; 27/0 cross-service; both E2E; backup, restore and rollback all verified on the live hosted stack |
-| 2 | Release SHAs fixed | **PASS** | Marketing `8ed392d…`, Operations `0207819…`, monolith rollback `68a28ec…`; both services report theirs at `/version` |
+| 2 | Release SHAs fixed | **PASS FOR MERGE** | Operations `d7263370…` is pinned in the production Compose; Marketing is the PR #11 candidate and its merge SHA must be recorded before deployment; both services report theirs at `/version` |
 | 3 | CI green on those SHAs | **PASS** | dual-service 27/0, staging stack 15/0, restore and rollback verified |
 | 4 | Production dependency audit clean | **PASS** | 0 vulnerabilities, both services |
 | 5 | Rollback proven | **PASS** | Marketing rolled back one release on the hosted stack **independently of Operations**, both healthy afterwards |
@@ -25,11 +31,43 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | 13 | Cutover procedure with freeze strategy | **PASS (prepared)** | runbook §6, 30-minute budget, 60-minute hard stop |
 | 14 | Rollback procedure | **PASS (prepared)** | runbook §9, proxy-first, monolith retained 14 days |
 | 15 | Provider callback plan | **PASS (prepared)** | three provider-held URLs identified (WhatsApp, Google OAuth, Gmail Pub/Sub); Telegram needs none; **no payment gateway exists**. Re-registration is manual and remains a cutover action |
-| 16 | **Production-shaped migration rehearsal** | **OPEN — BLOCKING** | tooling built and verified against synthetic data; needs a production backup restored to a disposable host, which needs your approval |
+| 16 | **Production-shaped migration rehearsal** | **PASS** | ran 2026-08-16 against a read-only 107 MB production export in a disposable container. Found and fixed 4 blocking defects. Final run: sanitisation audited independently (234,634 rows row-by-row, 0 unchanged; 1,873 addresses and 1,533 numbers harvested, 0 survived), migration validated (37 tables at parity, 32 FKs intact, 0 orphans, 0 duplicates, 0 dangling file references), idempotent re-run wrote 0, interrupted run resumed to a PASS, rollback left the monolith intact. Production untouched: `/health` 200 and PM2 restarts unchanged at 3 throughout |
 | 17 | No critical unresolved defect | **PASS with caveat** | no defect introduced by the split remains open; a class of **inherited** defects is documented and deliberately out of scope |
-| 18 | Responsible operator available | **OPEN — yours to confirm** | someone must be present for the window and able to authorise rollback |
+| 18 | Responsible operator available | **PASS** | confirmed by the owner 2026-08-16: present for the window and able to authorise rollback |
 
-**Verdict: NO-GO** on gates 16 and 18.
+**Verdict: GO** — all eighteen hard gates pass, and the residual is closed.
+
+A second, complete production-shaped rehearsal ran on 2026-08-16 against a
+fresh 108 MB read-only export using the current tooling and the validated
+release SHAs. It found three further arithmetic defects — two of which would
+have failed reconciliation during the real cutover — fixed them, and then
+passed every stage: sanitisation audited independently, execute, reconcile,
+validate, idempotent re-run, checkpoint/resume, and rollback. Production was
+untouched and the environment was destroyed afterwards.
+
+Detail: `docs/final-production-rehearsal.md` in the monolith repository.
+
+### The gate-16 decision, resolved 2026-08-16
+
+Investigated read-only. Classification: **A=5, B=0, C=0, D=31**. B=0 clears the
+hard blocker — every reference to any of the 36 is a file path inherited by a
+live candidate, and no booking, interview, attendance, mail, BGV, payment or
+audit row belongs to one.
+
+The 31 ambiguous records are quarantined: never created in `candidates_store`,
+so they cannot appear as live candidates, and preserved in `_archive/`, which
+the application never reads. Whether they were retired on purpose or lost in
+the July move to PostgreSQL is still open, but it now costs nothing to leave
+open.
+
+Two tool defects surfaced and were fixed: the broken-reference check was a
+structural no-op (so this gate's "0 broken references" was vacuous — production
+actually has 70, all inherited), and the archive was being written to the path
+the application reads, where a missing `DATABASE_URL` would have promoted the
+superseded mirror over the live store.
+
+Detail: `docs/orphaned-candidate-records-investigation.md` in the monolith
+repository.
 
 ### Corrected after review
 
@@ -50,30 +88,31 @@ against handler behaviour and not only against `.env.example`.
 
 ---
 
-## Gate 16 — the blocking one
+## Gate 16 — closed, and worth reading
 
-The migration tooling is proven: streaming reads, batched inserts, resumable
-checkpoints, FK-aware ordering, idempotent re-runs, reconciliation, and a
-fail-closed sanitiser that left **zero of 14 planted values** surviving across
-every text and JSONB column.
+It passed, but only after four defects were fixed. Every one of them was
+invisible to the synthetic rehearsal, and three of them would have reported a
+successful run.
 
-What has *not* happened is a rehearsal against data shaped like production's:
-real row counts, real cardinality, real legacy oddities. Synthetic data has
-invented distributions, and those are exactly what break a migration at scale.
+1. **Candidates were migrated from a stale JSON mirror.** The file holds 102
+   records, the table 195, and only 66 are shared. Of the 26 candidates live
+   recruitment mail references, all 26 are in the table and 7 are in the file.
+   The cutover would have dropped 129 live candidates and reported success.
+2. **275 evidence files were not migrated.** The declared tree holds 6 files;
+   candidate payment proofs and resumes live in trees nobody had declared.
+3. **Live Telegram session secrets would have been copied.** The exclusion list
+   was consulted when printing the plan and ignored by the copy.
+4. **Sanitiser gaps**, including 41 of 42 json columns copied verbatim, phone
+   numbers used as JSON dict keys, the untouched payment ledger, and the
+   Diffie-Hellman secret for encrypted calls.
 
-To close it I need your approval to:
+Measured cutover cost: **about 30 seconds of data work** — dump 11s, schema 1s,
+migrate 12s, reconcile 1s, validate 5s. The 30-minute window is not constrained
+by the data step; it is constrained by service start, proxy switch, TLS and the
+three provider callbacks that must be re-registered one at a time.
 
-1. take a read-only `pg_dump` of the production database (349 MB),
-2. restore it onto a disposable target,
-3. run `sanitize_snapshot.py` over it and verify zero leakage,
-4. run the split migration against the sanitised copy and reconcile.
-
-Production is untouched throughout — step 1 is a read. Procedure is in
-`docs/sanitized-snapshot-procedure.md`.
-
-Until this passes, the cutover would be the first time the tool sees
-production-shaped data, which is not a risk worth taking with candidate records
-and payment evidence.
+Full detail, evidence tables and timings: `docs/production-shaped-rehearsal.md`
+in the monolith repository.
 
 ---
 
@@ -99,6 +138,8 @@ No value appears here or in any committed file. Every production value is
 | `WHATSAPP_*` | ✓ | — | PROVIDER CREDENTIAL | Carried; see the callback inventory |
 | `MAILBOX_CREDENTIAL_ENCRYPTION_KEY` | — | ✓ | SECRET | **Carried, not regenerated** — it decrypts stored mailbox credentials, and a new key makes them unreadable |
 | `GMAIL_PUBSUB_*`, `GOOGLE_OAUTH_REDIRECT_URI` | — | ✓ | PROVIDER CREDENTIAL / URL | Redirect URI must move to the Operations hostname |
+| `COMPANY_PAYMENT_UPI_IDS`, `COMPANY_PAYMENT_RECEIVER_NAMES` | — | ✓ | PAYMENT IDENTITY | **Required and carried from verified production configuration.** Empty values make genuine receipts conflict with fixture placeholders |
+| `COMPANY_PAYMENT_PHONE_NUMBERS`, `COMPANY_PAYMENT_ACCOUNT_NUMBERS` | — | ✓ | PAYMENT IDENTITY | Optional identifiers, but passed through whenever configured so all accepted payment rails share one receiver registry |
 | `TELEAUTOMATION_SAFE_UI_MODE` | ✓ | ✓ | TUNABLE | `false` in production — staging runs `true` |
 | `OLLAMA_*`, `OCR_*`, `AI_*` | ✓ | ✓ | TUNABLE | Carried |
 

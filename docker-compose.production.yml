@@ -1,4 +1,4 @@
-# Production stack for the split. PREPARED, NOT DEPLOYED.
+# Authoritative unified production stack for the split. PREPARED, NOT DEPLOYED.
 #
 #   docker compose -f docker-compose.production.yml --env-file .env.production up -d
 #
@@ -18,6 +18,13 @@
 # through the nginx server blocks in deploy/production/nginx-production.conf.template.
 
 name: teleautomation-production
+
+# Operations is an independently reviewed release. Pinning its build argument
+# here prevents an environment typo from labelling a different checkout as the
+# approved production release. The source checkout must still be verified at
+# this exact commit before any build.
+x-release-shas:
+  operations: &operations-release d72633702ede6da5556b42e61155cfe21aca6b67
 
 x-capped-logs: &capped
   driver: json-file
@@ -72,7 +79,7 @@ services:
     build:
       context: ../teleautomation-business
       args:
-        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:?}
+        RELEASE_SHA: *operations-release
         VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
         VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
     environment:
@@ -119,7 +126,9 @@ services:
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:?}
       WHATSAPP_BSP: ${WHATSAPP_BSP:-interakt}
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:?}
-      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:?}
+      # interakt authenticates by signature; this is a Meta Cloud API concept
+      # that production has never set and core/config.py:72 defaults to "".
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN:?}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:?}
 
@@ -127,12 +136,34 @@ services:
       # falls through to _generate_vapid_keys() and persists a NEW keypair
       # (features/web_push.py:92-96), which silently invalidates every existing
       # browser subscription. These must be the monolith's current values.
-      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:?}
-      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:?}
+      # Left optional on purpose. features/web_push.py vapid_keys() prefers
+      # these, then falls back to DATA_DIR/vapid_keys.json, then GENERATES a new
+      # pair - and a new pair silently invalidates every existing subscription.
+      # The private key is a multi-line PEM, which cannot survive a .env file, so
+      # the key store is carried into the data volume instead and left
+      # authoritative here. Deployment verifies the served public key matches
+      # production before traffic moves.
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
       WEB_PUSH_VAPID_EMAIL: ${WEB_PUSH_VAPID_EMAIL:-}
 
+      # Carried from the monolith. Without these the AI surface degrades
+      # silently rather than failing, which is how it would reach users.
+      AI_API_KEY: ${AI_API_KEY:?}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?}
+      AI_API_BASE_URL: ${AI_API_BASE_URL:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      OLLAMA_REASONING_MODEL: ${OLLAMA_REASONING_MODEL:-}
+      DEMO_TOOLS_LOCKEDIN_MAC_URL: ${DEMO_TOOLS_LOCKEDIN_MAC_URL:-}
+      DEMO_TOOLS_LOCKEDIN_WINDOWS_URL: ${DEMO_TOOLS_LOCKEDIN_WINDOWS_URL:-}
+      DEMO_TOOLS_ULTRAVIEWER_URL: ${DEMO_TOOLS_ULTRAVIEWER_URL:-}
+      FORWARD_REST_MAX_SECONDS: ${FORWARD_REST_MAX_SECONDS:-}
+      FORWARD_REST_MIN_SECONDS: ${FORWARD_REST_MIN_SECONDS:-}
+      WHATSAPP_DEFAULT_SLOT: ${WHATSAPP_DEFAULT_SLOT:-}
+      WHATSAPP_MEDIA_ACCESS_TOKEN: ${WHATSAPP_MEDIA_ACCESS_TOKEN:-}
       PUBLIC_CALL_BASE_URL: ${PUBLIC_CALL_BASE_URL:-https://marketing.teleautomation.online}
       DASHBOARD_PUBLIC_URL: https://marketing.teleautomation.online
+    extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["127.0.0.1:${MARKETING_PORT:-8110}:8000"]
     volumes:
       - marketing_data:/var/lib/teleautomation-marketing
@@ -150,7 +181,7 @@ services:
     build:
       context: ../teleautomation-business
       args:
-        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:?}
+        RELEASE_SHA: *operations-release
         VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
         VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
     restart: unless-stopped
@@ -184,8 +215,64 @@ services:
       AI_INTERVIEW_OFFER_TRACKING_ENABLED: ${AI_INTERVIEW_OFFER_TRACKING_ENABLED:?}
       AI_MAILBOX_SYNC_ENABLED: ${AI_MAILBOX_SYNC_ENABLED:?}
 
+      # Carried from the monolith: the recruitment AI pipeline, the Ollama
+      # pool and the payment extraction settings all live here.
+      AI_API_KEY: ${AI_API_KEY:?}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:?}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:?}
+      AI_API_BASE_URL: ${AI_API_BASE_URL:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      OLLAMA_REASONING_MODEL: ${OLLAMA_REASONING_MODEL:-}
+      AI_INTERVIEW_AUTO_BOOKING_ENABLED: ${AI_INTERVIEW_AUTO_BOOKING_ENABLED:-}
+      AI_INTERVIEW_DEFAULT_TIMEZONE: ${AI_INTERVIEW_DEFAULT_TIMEZONE:-}
+      AI_INTERVIEW_DEFAULT_TIMEZONE_DOMAINS: ${AI_INTERVIEW_DEFAULT_TIMEZONE_DOMAINS:-}
+      AI_JOB_TIMEOUT: ${AI_JOB_TIMEOUT:-}
+      AI_MAIL_AI_LEASE_SECONDS: ${AI_MAIL_AI_LEASE_SECONDS:-}
+      AI_MAIL_AI_RETRY_BATCH_SIZE: ${AI_MAIL_AI_RETRY_BATCH_SIZE:-}
+      AI_MAIL_AUDIT_AI_INTERVAL_SECONDS: ${AI_MAIL_AUDIT_AI_INTERVAL_SECONDS:-}
+      AI_MAIL_INGESTION_LEASE_MINUTES: ${AI_MAIL_INGESTION_LEASE_MINUTES:-}
+      AI_MAIL_SYNC_BATCH_SIZE: ${AI_MAIL_SYNC_BATCH_SIZE:-}
+      AI_OFFER_VERIFICATION_ENABLED: ${AI_OFFER_VERIFICATION_ENABLED:-}
+      AI_OLLAMA_MAX_CONCURRENCY: ${AI_OLLAMA_MAX_CONCURRENCY:-}
+      AI_RECRUITMENT_AUTO_ACCEPT_THRESHOLD: ${AI_RECRUITMENT_AUTO_ACCEPT_THRESHOLD:-}
+      AI_RECRUITMENT_JOB_TIMEOUT_SECONDS: ${AI_RECRUITMENT_JOB_TIMEOUT_SECONDS:-}
+      AI_RECRUITMENT_MODEL: ${AI_RECRUITMENT_MODEL:-}
+      AI_RECRUITMENT_QUEUE_WAIT_SECONDS: ${AI_RECRUITMENT_QUEUE_WAIT_SECONDS:-}
+      AI_RECRUITMENT_REQUEST_TIMEOUT_SECONDS: ${AI_RECRUITMENT_REQUEST_TIMEOUT_SECONDS:-}
+      AI_RECRUITMENT_VALIDATOR_MODEL: ${AI_RECRUITMENT_VALIDATOR_MODEL:-}
+      INVITE_EXTRACTION_MODE: ${INVITE_EXTRACTION_MODE:-}
+      OLLAMA_BACKUP_VISION_MODEL: ${OLLAMA_BACKUP_VISION_MODEL:-}
+      OLLAMA_CONNECT_TIMEOUT: ${OLLAMA_CONNECT_TIMEOUT:-}
+      OLLAMA_CONNECT_TIMEOUT_SECONDS: ${OLLAMA_CONNECT_TIMEOUT_SECONDS:-}
+      OLLAMA_EXPECT_REVERSE_SSH_TUNNEL: ${OLLAMA_EXPECT_REVERSE_SSH_TUNNEL:-}
+      OLLAMA_FALLBACK_MODEL: ${OLLAMA_FALLBACK_MODEL:-}
+      OLLAMA_HEALTH_TIMEOUT_SECONDS: ${OLLAMA_HEALTH_TIMEOUT_SECONDS:-}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-}
+      OLLAMA_MAX_RETRIES: ${OLLAMA_MAX_RETRIES:-}
+      OLLAMA_NODE_JAGADEESH_URL: ${OLLAMA_NODE_JAGADEESH_URL:-}
+      OLLAMA_PRIMARY_MODEL: ${OLLAMA_PRIMARY_MODEL:-}
+      OLLAMA_REMOTE_ENABLED: ${OLLAMA_REMOTE_ENABLED:-}
+      OLLAMA_REQUEST_TIMEOUT: ${OLLAMA_REQUEST_TIMEOUT:-}
+      OLLAMA_RESPONSE_TIMEOUT_SECONDS: ${OLLAMA_RESPONSE_TIMEOUT_SECONDS:-}
+      OLLAMA_RETRY_COUNT: ${OLLAMA_RETRY_COUNT:-}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-}
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-}
+      PAYMENT_EXTRACTION_PROVIDER: ${PAYMENT_EXTRACTION_PROVIDER:-}
+      PAYMENT_VERIFICATION_OCR_ENABLED: ${PAYMENT_VERIFICATION_OCR_ENABLED:-}
+      REFERRER_RECEIVER_FLOW_ENABLED: ${REFERRER_RECEIVER_FLOW_ENABLED:-}
+      # Real company receiver identity is mandatory. Without a configured UPI
+      # handle and receiver name, Operations falls back to fixture placeholders
+      # and rejects genuine production receipts as receiver conflicts. Phone
+      # and account-number identifiers are optional but must be passed through
+      # when configured so every accepted payment rail uses the same registry.
+      COMPANY_PAYMENT_UPI_IDS: ${COMPANY_PAYMENT_UPI_IDS:?}
+      COMPANY_PAYMENT_PHONE_NUMBERS: ${COMPANY_PAYMENT_PHONE_NUMBERS:-}
+      COMPANY_PAYMENT_ACCOUNT_NUMBERS: ${COMPANY_PAYMENT_ACCOUNT_NUMBERS:-}
+      COMPANY_PAYMENT_RECEIVER_NAMES: ${COMPANY_PAYMENT_RECEIVER_NAMES:?}
       OCR_ENABLED: ${OCR_ENABLED:-false}
       PAYMENT_ENGINE_V2_ENABLED: ${PAYMENT_ENGINE_V2_ENABLED:-false}
+    extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["127.0.0.1:${OPERATIONS_PORT:-8210}:8000"]
     volumes:
       - operations_data:/var/lib/teleautomation-operations

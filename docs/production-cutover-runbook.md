@@ -23,13 +23,14 @@ Fix these before starting. Everything below refers to them.
 
 | | Commit |
 |---|---|
-| Marketing | `8ed392d253e63c059c7c1ab4245697b9d80d4e77` |
-| Operations | `0207819529e0b6ba88a5e61d435a60108d3557bc` |
+| Marketing | PR #11 merge commit; record the exact SHA before deployment |
+| Operations | `d72633702ede6da5556b42e61155cfe21aca6b67` |
 | Monolith rollback target | `68a28ecf2301c537eb8ee96f7d30649bd832c2f1` |
 
 Both services report their commit at `/version`. Every verification step below
 checks it, because a service quietly running an older image makes every other
-signal meaningless.
+signal meaningless. The unified production Compose pins the Operations build
+argument to the approved SHA; the Operations source checkout must match it.
 
 ---
 

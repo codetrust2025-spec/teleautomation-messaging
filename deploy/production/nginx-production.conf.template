@@ -38,6 +38,44 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
 
+    # Links already sent to real people point at the apex. Without these, every
+    # previously issued join link and booking link 404s the moment the apex
+    # stops proxying the application. Narrow prefixes only - this is a redirect,
+    # not a proxy, so the apex still does not recombine the two services.
+    # Provider-held callbacks still registered against the apex. A provider does
+    # not reliably follow a 301 on a POST, and a dropped webhook is a message
+    # nobody ever learns was sent - so these are proxied to the owning service
+    # until each provider is re-registered against its subdomain. Narrow exact
+    # prefixes only; the apex still serves a static page for everything else.
+    location ^~ /webhooks/whatsapp {
+        proxy_pass http://127.0.0.1:8110;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location ^~ /api/candidate-mailboxes/oauth/google/ {
+        proxy_pass http://127.0.0.1:8210;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location ^~ /api/gmail/pubsub/ {
+        proxy_pass http://127.0.0.1:8210;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /call/join/   { return 301 https://marketing.teleautomation.online$request_uri; }
+    location ^~ /voice/join/  { return 301 https://marketing.teleautomation.online$request_uri; }
+    location ^~ /submit-slot  { return 301 https://operations.teleautomation.online$request_uri; }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -74,7 +112,7 @@ server {
     location ^~ /internal/ { return 404; }
 
     location / {
-        proxy_pass http://127.0.0.1:__MARKETING_PORT__;
+        proxy_pass http://127.0.0.1:8110;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
@@ -103,8 +141,8 @@ server {
     listen 443 ssl http2;
     server_name operations.teleautomation.online;
 
-    ssl_certificate     /etc/letsencrypt/live/operations.teleautomation.online/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/operations.teleautomation.online/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/marketing.teleautomation.online/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/marketing.teleautomation.online/privkey.pem;
 
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
@@ -115,7 +153,7 @@ server {
     location ^~ /internal/ { return 404; }
 
     location / {
-        proxy_pass http://127.0.0.1:__OPERATIONS_PORT__;
+        proxy_pass http://127.0.0.1:8210;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
