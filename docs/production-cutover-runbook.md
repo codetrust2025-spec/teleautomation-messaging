@@ -24,7 +24,7 @@ Fix these before starting. Everything below refers to them.
 | | Commit |
 |---|---|
 | Marketing | PR #11 merge commit; record the exact SHA before deployment |
-| Operations | `35625668c9a1083b5ac201c6cb671f2410d99964` |
+| Operations | `d72633702ede6da5556b42e61155cfe21aca6b67` |
 | Monolith rollback target | `68a28ecf2301c537eb8ee96f7d30649bd832c2f1` |
 
 Both services report their commit at `/version`. Every verification step below

@@ -17,7 +17,7 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | # | Gate | Status | Evidence |
 |---|---|---|---|
 | 1 | STAGING VERIFIED | **PASS** | Marketing 22/0 and Operations 24/0 authenticated walkthroughs; 16/0 hosted checks; 27/0 cross-service; both E2E; backup, restore and rollback all verified on the live hosted stack |
-| 2 | Release SHAs fixed | **PASS FOR MERGE** | Operations `35625668…` is pinned in the production Compose; Marketing is the PR #11 candidate and its merge SHA must be recorded before deployment; both services report theirs at `/version` |
+| 2 | Release SHAs fixed | **PASS FOR MERGE** | Operations `d7263370…` is pinned in the production Compose; Marketing is the PR #11 candidate and its merge SHA must be recorded before deployment; both services report theirs at `/version` |
 | 3 | CI green on those SHAs | **PASS** | dual-service 27/0, staging stack 15/0, restore and rollback verified |
 | 4 | Production dependency audit clean | **PASS** | 0 vulnerabilities, both services |
 | 5 | Rollback proven | **PASS** | Marketing rolled back one release on the hosted stack **independently of Operations**, both healthy afterwards |

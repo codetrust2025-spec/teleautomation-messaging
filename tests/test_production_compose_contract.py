@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-OPERATIONS_RELEASE = "35625668c9a1083b5ac201c6cb671f2410d99964"
+OPERATIONS_RELEASE = "d72633702ede6da5556b42e61155cfe21aca6b67"
 
 
 def test_production_compose_is_the_unified_stack() -> None:
