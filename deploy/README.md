@@ -5,12 +5,12 @@ Preparation only; do not execute against production without authorization.
 - Linux user: `telemsg`
 - release root: `/srv/teleautomation-messaging`
 - environment: `/etc/teleautomation-messaging.env` (mode `0600`)
-- writable data: `/var/lib/teleautomation-messaging`
+- writable data and Telegram sessions: `/var/lib/teleautomation-marketing`
 - logs: `/var/log/teleautomation-messaging`
 - bind: `127.0.0.1:8100`
 - database/user: create dedicated Marketing names during staging provisioning
 
-Build the image and frontend artifact in CI, then deploy only the versioned image. Run one API process initially because the account clients, workers, schedulers, and locks are process-local. Mount the data directory and Telegram session directory only into this service. Never mount Operations storage.
+Build the image and frontend artifact in CI, then deploy only the versioned image. Run one API process initially because the account clients, workers, schedulers, and locks are process-local. Mount the Marketing data volume only into this service and set `TELEGRAM_SESSION_DIR=/var/lib/teleautomation-marketing`. Existing names are preserved: account N uses `/var/lib/teleautomation-marketing/session_accountN.session` (including SQLite sidecars). Never mount Operations storage.
 
 Create a dedicated database/user with a generated password supplied through `psql` variables; revoke public access, grant the application user only its database/schema, and prove that it cannot connect to the Operations database. Set `DATABASE_URL`, `MARKETING_DATA_DIR`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, distinct dashboard credentials/secrets, provider settings, both Operations URLs, and the cross-service token through the protected environment file.
 

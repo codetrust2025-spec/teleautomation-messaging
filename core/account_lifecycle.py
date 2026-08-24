@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 
-from core.config import ACCOUNTS, BASE_DIR, STATE_DIR
+from core.config import ACCOUNTS, STATE_DIR, telegram_session_base
 from core.login_pending import clear_pending
 
 
 def _main_session_base(slot: str) -> str:
-    return os.path.join(BASE_DIR, ACCOUNTS[slot])
+    return telegram_session_base(slot)
 
 
 def _staging_session_base(slot: str) -> str:

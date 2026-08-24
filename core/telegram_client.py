@@ -11,7 +11,7 @@ from telethon import TelegramClient
 
 T = TypeVar("T")
 
-from core.config import ACCOUNTS, API_HASH, API_ID, BASE_DIR, STATE_DIR
+from core.config import ACCOUNTS, API_HASH, API_ID, STATE_DIR, telegram_session_base
 
 _clients: dict[str, TelegramClient | None] = {slot: None for slot in ACCOUNTS}
 _login_clients: dict[str, TelegramClient | None] = {}
@@ -22,7 +22,7 @@ _login_exclusive: set[str] = set()
 
 
 def _main_session_base(slot: str) -> str:
-    return os.path.join(BASE_DIR, ACCOUNTS[slot])
+    return telegram_session_base(slot)
 
 
 def _staging_session_base(slot: str) -> str:
@@ -310,7 +310,7 @@ async def _ensure_connected_unlocked(slot: str) -> TelegramClient:
     if client is not None:
         await _disconnect_unlocked(slot)
         await asyncio.sleep(0.35)
-    client = TelegramClient(ACCOUNTS[slot], API_ID, API_HASH)
+    client = TelegramClient(_main_session_base(slot), API_ID, API_HASH)
     await _connect_with_retry(slot, client)
     _apply_session_wal(client)
     _clients[slot] = client

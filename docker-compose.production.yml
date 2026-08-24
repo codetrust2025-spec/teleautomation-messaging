@@ -101,6 +101,7 @@ services:
       SERVICE_NAME: teleautomation-messaging
       DATABASE_URL: ${MARKETING_DATABASE_URL:?}
       MARKETING_DATA_DIR: /var/lib/teleautomation-marketing
+      TELEGRAM_SESSION_DIR: /var/lib/teleautomation-marketing
       # Peer over the private compose network, never a public hostname: a
       # service-to-service call has no reason to leave the host, and routing it
       # through the internet would add TLS, DNS and the proxy to a path that
