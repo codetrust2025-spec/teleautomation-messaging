@@ -368,15 +368,12 @@ class AccountManager:
         await telegram_client.abandon_all_sessions()
 
     async def resume_persisted_workers(self) -> list[str]:
-        from core.config import BASE_DIR
-
         slots = load_running_slots()
         if not slots:
             return []
         await self.refresh_all_info()
         async def _resume(slot: str) -> str | None:
             w = self.get_worker(slot)
-            session_path = os.path.join(BASE_DIR, ACCOUNTS[slot]) + ".session"
             if not w.state.account_info or not session_manager.exists(slot):
                 mark_stopped(slot)
                 w.reset_after_logout()

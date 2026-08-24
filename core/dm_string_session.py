@@ -17,7 +17,7 @@ from typing import Awaitable, Callable, TypeVar
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
-from core.config import ACCOUNTS, API_HASH, API_ID, BASE_DIR, STATE_DIR
+from core.config import API_HASH, API_ID, STATE_DIR, telegram_session_path
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def _prepare_snapshot_session(slot: str) -> str | None:
             return None
     except Exception:
         pass
-    src = os.path.join(BASE_DIR, f"{ACCOUNTS[slot]}.session")
+    src = telegram_session_path(slot)
     if not os.path.exists(src):
         return None
     base = _snapshot_session_path(slot)

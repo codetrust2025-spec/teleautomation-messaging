@@ -151,7 +151,14 @@ invalidated by the server.
 
 They must be **moved, not copied**, and only after the monolith is stopped.
 Marketing owns them. The migration tool deliberately refuses to copy `*.session`
-files, so this step is manual, deliberate, and done exactly once.
+files, so this step is manual, deliberate, and done exactly once. Their container
+destination is the persistent Marketing volume at
+`/var/lib/teleautomation-marketing/session_accountN.session`; the existing file
+names and any SQLite sidecars are retained. `TELEGRAM_SESSION_DIR` makes every
+runtime discovery and Telethon connection use that root. Deployments that do not
+set either `TELEGRAM_SESSION_DIR` or `MARKETING_DATA_DIR` retain the legacy
+application-root location, but the production Compose always selects the
+persistent volume. The application never copies credentials automatically.
 
 ### Maximum acceptable freeze window
 

@@ -40,3 +40,9 @@ def test_company_payment_receiver_environment_is_explicit() -> None:
     )
     for declaration in required:
         assert declaration in COMPOSE
+
+
+def test_marketing_sessions_use_the_persistent_data_volume() -> None:
+    assert "MARKETING_DATA_DIR: /var/lib/teleautomation-marketing" in COMPOSE
+    assert "TELEGRAM_SESSION_DIR: /var/lib/teleautomation-marketing" in COMPOSE
+    assert "marketing_data:/var/lib/teleautomation-marketing" in COMPOSE

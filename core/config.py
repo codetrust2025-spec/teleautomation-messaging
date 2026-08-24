@@ -39,6 +39,19 @@ DATA_DIR = os.path.abspath(
     or os.environ.get("TELEAUTOMATION_DATA_DIR")
     or os.path.join(BASE_DIR, "data")
 )
+
+
+def _resolve_session_dir(*, base_dir: str, data_dir: str) -> str:
+    """Resolve the Telethon session root without breaking legacy installs."""
+    explicit = (os.environ.get("TELEGRAM_SESSION_DIR") or "").strip()
+    if explicit:
+        return os.path.abspath(explicit)
+    if (os.environ.get("MARKETING_DATA_DIR") or "").strip():
+        return data_dir
+    return base_dir
+
+
+SESSION_DIR = _resolve_session_dir(base_dir=BASE_DIR, data_dir=DATA_DIR)
 STATE_DIR = os.path.join(DATA_DIR, "accounts")
 
 GROUPS_FILE = os.path.join(DATA_DIR, "groups_list.json")
@@ -127,6 +140,18 @@ ACCOUNTS = _load_accounts()
 
 # Ordered slots for UI and iteration (each maps to an independent asyncio worker)
 ACCOUNT_SLOTS = list(ACCOUNTS.keys())
+
+
+def telegram_session_base(slot: str) -> str:
+    """Return the configured Telethon session prefix for one account slot."""
+    if slot not in ACCOUNTS:
+        raise ValueError(f"Invalid slot: {slot}")
+    return os.path.join(SESSION_DIR, ACCOUNTS[slot])
+
+
+def telegram_session_path(slot: str) -> str:
+    """Return the SQLite session filename while preserving legacy naming."""
+    return telegram_session_base(slot) + ".session"
 
 
 def reload_accounts() -> dict[str, str]:

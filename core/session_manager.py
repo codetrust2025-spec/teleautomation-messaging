@@ -6,7 +6,7 @@ import os
 
 from core.account_logging import account_log
 from core.account_lifecycle import purge_all_session_artifacts
-from core.config import ACCOUNTS, BASE_DIR
+from core.config import ACCOUNTS, telegram_session_path
 
 
 class SessionManager:
@@ -14,7 +14,7 @@ class SessionManager:
 
     def session_path(self, account_id: str) -> str:
         self._validate(account_id)
-        return os.path.join(BASE_DIR, ACCOUNTS[account_id]) + ".session"
+        return telegram_session_path(account_id)
 
     def _validate(self, account_id: str) -> None:
         if account_id not in ACCOUNTS:
