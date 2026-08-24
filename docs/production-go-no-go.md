@@ -17,7 +17,7 @@ A gate is PASS only with evidence. "Looks fine" is not evidence.
 | # | Gate | Status | Evidence |
 |---|---|---|---|
 | 1 | STAGING VERIFIED | **PASS** | Marketing 22/0 and Operations 24/0 authenticated walkthroughs; 16/0 hosted checks; 27/0 cross-service; both E2E; backup, restore and rollback all verified on the live hosted stack |
-| 2 | Release SHAs fixed | **PASS** | Marketing `8ed392d…`, Operations `0207819…`, monolith rollback `68a28ec…`; both services report theirs at `/version` |
+| 2 | Release SHAs fixed | **PASS FOR MERGE** | Operations `35625668…` is pinned in the production Compose; Marketing is the PR #11 candidate and its merge SHA must be recorded before deployment; both services report theirs at `/version` |
 | 3 | CI green on those SHAs | **PASS** | dual-service 27/0, staging stack 15/0, restore and rollback verified |
 | 4 | Production dependency audit clean | **PASS** | 0 vulnerabilities, both services |
 | 5 | Rollback proven | **PASS** | Marketing rolled back one release on the hosted stack **independently of Operations**, both healthy afterwards |
@@ -138,6 +138,8 @@ No value appears here or in any committed file. Every production value is
 | `WHATSAPP_*` | ✓ | — | PROVIDER CREDENTIAL | Carried; see the callback inventory |
 | `MAILBOX_CREDENTIAL_ENCRYPTION_KEY` | — | ✓ | SECRET | **Carried, not regenerated** — it decrypts stored mailbox credentials, and a new key makes them unreadable |
 | `GMAIL_PUBSUB_*`, `GOOGLE_OAUTH_REDIRECT_URI` | — | ✓ | PROVIDER CREDENTIAL / URL | Redirect URI must move to the Operations hostname |
+| `COMPANY_PAYMENT_UPI_IDS`, `COMPANY_PAYMENT_RECEIVER_NAMES` | — | ✓ | PAYMENT IDENTITY | **Required and carried from verified production configuration.** Empty values make genuine receipts conflict with fixture placeholders |
+| `COMPANY_PAYMENT_PHONE_NUMBERS`, `COMPANY_PAYMENT_ACCOUNT_NUMBERS` | — | ✓ | PAYMENT IDENTITY | Optional identifiers, but passed through whenever configured so all accepted payment rails share one receiver registry |
 | `TELEAUTOMATION_SAFE_UI_MODE` | ✓ | ✓ | TUNABLE | `false` in production — staging runs `true` |
 | `OLLAMA_*`, `OCR_*`, `AI_*` | ✓ | ✓ | TUNABLE | Carried |
 

@@ -1,4 +1,4 @@
-# Production stack for the split. PREPARED, NOT DEPLOYED.
+# Authoritative unified production stack for the split. PREPARED, NOT DEPLOYED.
 #
 #   docker compose -f docker-compose.production.yml --env-file .env.production up -d
 #
@@ -18,6 +18,13 @@
 # through the nginx server blocks in deploy/production/nginx-production.conf.template.
 
 name: teleautomation-production
+
+# Operations is an independently reviewed release. Pinning its build argument
+# here prevents an environment typo from labelling a different checkout as the
+# approved production release. The source checkout must still be verified at
+# this exact commit before any build.
+x-release-shas:
+  operations: &operations-release 35625668c9a1083b5ac201c6cb671f2410d99964
 
 x-capped-logs: &capped
   driver: json-file
@@ -72,7 +79,7 @@ services:
     build:
       context: ../teleautomation-business
       args:
-        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:?}
+        RELEASE_SHA: *operations-release
         VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
         VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
     environment:
@@ -174,7 +181,7 @@ services:
     build:
       context: ../teleautomation-business
       args:
-        RELEASE_SHA: ${RELEASE_SHA_OPERATIONS:?}
+        RELEASE_SHA: *operations-release
         VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
         VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
     restart: unless-stopped
@@ -254,6 +261,15 @@ services:
       PAYMENT_EXTRACTION_PROVIDER: ${PAYMENT_EXTRACTION_PROVIDER:-}
       PAYMENT_VERIFICATION_OCR_ENABLED: ${PAYMENT_VERIFICATION_OCR_ENABLED:-}
       REFERRER_RECEIVER_FLOW_ENABLED: ${REFERRER_RECEIVER_FLOW_ENABLED:-}
+      # Real company receiver identity is mandatory. Without a configured UPI
+      # handle and receiver name, Operations falls back to fixture placeholders
+      # and rejects genuine production receipts as receiver conflicts. Phone
+      # and account-number identifiers are optional but must be passed through
+      # when configured so every accepted payment rail uses the same registry.
+      COMPANY_PAYMENT_UPI_IDS: ${COMPANY_PAYMENT_UPI_IDS:?}
+      COMPANY_PAYMENT_PHONE_NUMBERS: ${COMPANY_PAYMENT_PHONE_NUMBERS:-}
+      COMPANY_PAYMENT_ACCOUNT_NUMBERS: ${COMPANY_PAYMENT_ACCOUNT_NUMBERS:-}
+      COMPANY_PAYMENT_RECEIVER_NAMES: ${COMPANY_PAYMENT_RECEIVER_NAMES:?}
       OCR_ENABLED: ${OCR_ENABLED:-false}
       PAYMENT_ENGINE_V2_ENABLED: ${PAYMENT_ENGINE_V2_ENABLED:-false}
     extra_hosts: ["host.docker.internal:host-gateway"]

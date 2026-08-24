@@ -35,6 +35,40 @@ jobs:
         working-directory: dashboard
       - run: npm run build
         working-directory: dashboard
+      - name: Validate authoritative production Compose
+        env:
+          RELEASE_SHA_MARKETING: marketing-candidate-under-test
+          MARKETING_DB_USER: marketing_validation
+          MARKETING_DB_PASSWORD: validation-only
+          MARKETING_DB_NAME: marketing_validation
+          MARKETING_DATABASE_URL: postgresql://marketing_validation:validation-only@marketing-db:5432/marketing_validation
+          OPERATIONS_DB_USER: operations_validation
+          OPERATIONS_DB_PASSWORD: validation-only
+          OPERATIONS_DB_NAME: operations_validation
+          OPERATIONS_DATABASE_URL: postgresql://operations_validation:validation-only@operations-db:5432/operations_validation
+          INTERNAL_SERVICE_TOKEN: validation-only
+          MARKETING_DASHBOARD_USERNAME: validation
+          MARKETING_DASHBOARD_PASSWORD: validation-only
+          MARKETING_AUTH_SECRET: validation-only
+          OPERATIONS_DASHBOARD_USERNAME: validation
+          OPERATIONS_DASHBOARD_PASSWORD: validation-only
+          OPERATIONS_AUTH_SECRET: validation-only
+          OPS_API_TOKEN: validation-only
+          TELEGRAM_API_ID: validation-only
+          TELEGRAM_API_HASH: validation-only
+          WHATSAPP_ENABLED: "true"
+          WHATSAPP_API_KEY: validation-only
+          WHATSAPP_WEBHOOK_VERIFY_TOKEN: validation-only
+          WHATSAPP_WEBHOOK_SECRET: validation-only
+          AI_API_KEY: validation-only
+          MAILBOX_CREDENTIAL_ENCRYPTION_KEY: validation-only
+          GOOGLE_OAUTH_CLIENT_ID: validation-only
+          GOOGLE_OAUTH_CLIENT_SECRET: validation-only
+          AI_INTERVIEW_OFFER_TRACKING_ENABLED: "true"
+          AI_MAILBOX_SYNC_ENABLED: "true"
+          COMPANY_PAYMENT_UPI_IDS: validation@upi
+          COMPANY_PAYMENT_RECEIVER_NAMES: Validation Receiver
+        run: docker compose -f docker-compose.production.yml config --quiet
       - run: cp .env.example .env
       - run: docker compose build
       - run: docker compose up -d
