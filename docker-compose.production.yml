@@ -251,7 +251,14 @@ services:
       OLLAMA_HEALTH_TIMEOUT_SECONDS: ${OLLAMA_HEALTH_TIMEOUT_SECONDS:-}
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-}
       OLLAMA_MAX_RETRIES: ${OLLAMA_MAX_RETRIES:-}
+      # All three pool nodes resolve from their own variable in
+      # core/ollama_nodes.py, but only Jagadeesh was ever passed through,
+      # so rtx4060 and our_machine were stuck on their in-code defaults of
+      # 127.0.0.1 - which inside a container is the container, never the
+      # host. They could not be pointed at a tunnel at all.
       OLLAMA_NODE_JAGADEESH_URL: ${OLLAMA_NODE_JAGADEESH_URL:-}
+      OLLAMA_NODE_OUR_MACHINE_URL: ${OLLAMA_NODE_OUR_MACHINE_URL:-}
+      OLLAMA_NODE_RTX4060_URL: ${OLLAMA_NODE_RTX4060_URL:-}
       OLLAMA_PRIMARY_MODEL: ${OLLAMA_PRIMARY_MODEL:-}
       OLLAMA_REMOTE_ENABLED: ${OLLAMA_REMOTE_ENABLED:-}
       OLLAMA_REQUEST_TIMEOUT: ${OLLAMA_REQUEST_TIMEOUT:-}
