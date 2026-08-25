@@ -47,6 +47,7 @@ from core.account_info_store import (
     save_account_info,
 )
 from core.login_pending import clear_pending, load_pending, save_pending
+from core.startup_workers import start_optional_workers
 from core.worker_persistence import log_reload_event
 from services.account_manager import manager
 from events.event_bus import event_bus
@@ -404,22 +405,30 @@ async def _startup_background() -> None:
 
         asyncio.create_task(_inbox_periodic_sync())
         asyncio.create_task(_auto_stats_reset_loop())
-        from core.daily_briefing import scheduler_loop as daily_briefing_scheduler_loop
-        asyncio.create_task(daily_briefing_scheduler_loop(), name="daily_ai_briefing_scheduler")
 
-        try:
-            from core.karthik_inbox_sweep import start as start_karthik_inbox_sweep
+        # Every optional worker starts on its own. They used to share this
+        # function's single try/except, so the first one that could not start
+        # took every worker below it down silently — which is what happened:
+        # `core.daily_briefing` belongs to Operations and has never existed in
+        # this repository, so its unguarded import raised ModuleNotFoundError
+        # on every boot and neither worker below it ever ran.
+        def _start_karthik_inbox_sweep() -> None:
+            from core.karthik_inbox_sweep import start
 
-            start_karthik_inbox_sweep()
-        except Exception as e:
-            log_reload_event(f"Karthik inbox sweep start failed: {type(e).__name__}: {e}")
+            start()
 
-        try:
+        def _start_interview_reminder_loop() -> None:
             from services.interview_reminder_loop import start_interview_reminder_loop
 
             start_interview_reminder_loop()
-        except Exception as e:
-            log_reload_event(f"Interview reminder loop start failed: {type(e).__name__}: {e}")
+
+        start_optional_workers(
+            (
+                ("Karthik inbox sweep", _start_karthik_inbox_sweep),
+                ("Interview reminder loop", _start_interview_reminder_loop),
+            ),
+            log=log_reload_event,
+        )
     except Exception as e:
         log_reload_event(f"Startup background task error: {type(e).__name__}: {e}")
 
