@@ -69,6 +69,41 @@ def test_every_worker_is_attempted_even_when_all_of_them_fail():
     assert len(logged) == 2, "each failure is reported on its own, not collapsed"
 
 
+def test_every_first_party_module_main_imports_actually_exists():
+    """Marketing must not import modules that live in Operations.
+
+    Both startup failures were the same mistake: the monolith split left
+    `main.py` importing modules that were never carried into this repository —
+    `core.daily_briefing` and `services.interview_reminder_loop`, both of which
+    belong to Operations. Because they were imported lazily inside the startup
+    function, nothing caught them until the worker silently failed to run in
+    production.
+
+    Walking the AST reaches those lazy imports, which is precisely where this
+    class of bug hides.
+    """
+    import ast
+    import importlib.util
+
+    tree = ast.parse(__import__("inspect").getsource(main))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            modules.add(node.module)
+        elif isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+
+    first_party = sorted(
+        name for name in modules
+        if name.split(".")[0] in {"core", "services", "events", "api", "workers"}
+    )
+    missing = [
+        name for name in first_party
+        if importlib.util.find_spec(name) is None
+    ]
+    assert not missing, f"main.py imports modules this service does not have: {missing}"
+
+
 def test_startup_does_not_import_the_decommissioned_briefing_module():
     """The import that caused this must not come back.
 

@@ -417,16 +417,13 @@ async def _startup_background() -> None:
 
             start()
 
-        def _start_interview_reminder_loop() -> None:
-            from services.interview_reminder_loop import start_interview_reminder_loop
-
-            start_interview_reminder_loop()
-
+        # The interview reminder loop is not started here. It lives in
+        # Operations (`services/interview_reminder_loop.py`), which starts and
+        # stops it in its own lifespan; this repository has never carried the
+        # module. Registering it here only ever produced a startup failure,
+        # hidden until the daily-briefing import above it stopped masking it.
         start_optional_workers(
-            (
-                ("Karthik inbox sweep", _start_karthik_inbox_sweep),
-                ("Interview reminder loop", _start_interview_reminder_loop),
-            ),
+            (("Karthik inbox sweep", _start_karthik_inbox_sweep),),
             log=log_reload_event,
         )
     except Exception as e:
