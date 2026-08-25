@@ -5,7 +5,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-OPERATIONS_RELEASE = "d72633702ede6da5556b42e61155cfe21aca6b67"
+# Bumped with the Compose anchor, deliberately in lockstep: the pin exists so
+# an environment typo cannot label a different checkout as the approved
+# release, and a test that tracked the file automatically would guard
+# nothing. f952a08 adds the Gmail Pub/Sub push exemption
+# (teleautomation-business#25).
+OPERATIONS_RELEASE = "f952a0884dc2872541b583b2bcfa706d1076dc1c"
 
 
 def test_production_compose_is_the_unified_stack() -> None:
