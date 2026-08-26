@@ -74,7 +74,26 @@ server {
 
     location ^~ /call/join/   { return 301 https://marketing.teleautomation.online$request_uri; }
     location ^~ /voice/join/  { return 301 https://marketing.teleautomation.online$request_uri; }
-    location ^~ /submit-slot  { return 301 https://operations.teleautomation.online$request_uri; }
+
+    # submit-slot: intentional, scoped exception to the "apex never proxies an
+    # application" rule above. The candidate booking page must open ON the apex
+    # (teleautomation.online/submit-slot), not 301 to the Operations subdomain,
+    # because that is the URL sent to candidates. This is safe here specifically
+    # because the entire submit-slot flow is anonymous and cookieless: the
+    # /public/slots/* and /bookings/confirm endpoints take no session and set no
+    # cookie, so proxying them onto the apex does NOT widen or merge any session
+    # cookie scope. Kept deliberately narrow - only the exact paths the page and
+    # its booking action need. /api/ is NOT proxied (that would expose the
+    # authenticated Operations dashboard on the apex). Do not broaden this, and
+    # do not "restore" it to a 301: opening the page on the apex is the point.
+    location = /submit-slot   { proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    location = /submit-slot/  { proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ^~ /assets/      { proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ^~ /public/      { client_max_body_size 50m; proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    # /bookings/confirm is the only public booking-creation boundary; without
+    # this the page loads on the apex but the final "Confirm booking" POST 404s
+    # into the static landing page.
+    location ^~ /bookings/    { client_max_body_size 50m; proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
 
     location / {
         try_files $uri $uri/ /index.html;
