@@ -70,6 +70,38 @@ def test_the_directories_are_created_before_they_are_chowned():
     assert mkdir < chown, "mkdir must precede chown"
 
 
+def test_it_never_relies_on_shell_brace_expansion():
+    """systemd does not run ExecStartPre= through a shell.
+
+    Written as `/var/lib/nginx/{proxy,body,...}` the brace string is passed to
+    mkdir literally: it would create one directory whose name contains braces
+    while the five real ones stayed owned by nobody, and the chown would
+    "succeed" against the decoy. nginx would start cleanly and keep truncating.
+
+    The failure is silent in both directions, which is why this is asserted on
+    the characters rather than left to review.
+    """
+    body = _text()
+    assert "{" not in body and "}" not in body, (
+        "brace expansion does not happen in ExecStartPre - list every path in full"
+    )
+    for directive in _directives():
+        for name in TEMP_DIRS:
+            if f"/var/lib/nginx/{name}" in directive:
+                break
+        else:
+            raise AssertionError(f"directive names no known temp dir: {directive}")
+
+
+def test_each_path_is_a_separate_argument():
+    """Five directories means five space-separated arguments, not one blob."""
+    chown = [d for d in _directives() if "chown" in d][0]
+    args = chown.split("=", 1)[1].split()
+    paths = [a for a in args if a.startswith("/var/lib/nginx/")]
+    assert len(paths) == len(TEMP_DIRS), f"expected {len(TEMP_DIRS)} paths, got {paths}"
+    assert sorted(p.rsplit("/", 1)[1] for p in paths) == sorted(TEMP_DIRS)
+
+
 def test_the_chown_is_recursive():
     """Ownership on the directory alone is not enough — nginx writes into the
     numbered subdirectories it creates beneath it."""
