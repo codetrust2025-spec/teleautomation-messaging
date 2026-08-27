@@ -5,9 +5,17 @@
 #   marketing.teleautomation.online   -> Marketing service
 #   operations.teleautomation.online  -> Operations service
 #
-# The root block serves files. It must never proxy to either application:
-# routing both origins through one hostname is how the monolith's coupling would
-# creep back, and it would also merge their cookie scopes.
+# The root block serves files, and proxies an application only through narrow,
+# explicitly listed locations - never a broad prefix and never /api/. Routing
+# both origins wholesale through one hostname is how the monolith's coupling
+# would creep back.
+#
+# The listed exceptions are all unauthenticated by nature: provider callbacks
+# that are still registered against the apex, and the public submit-slot page
+# candidates are given apex links to. None of them sets a session cookie, which
+# is why the cookie-scope separation below still holds. Keep it that way: the
+# moment an authenticated route is proxied here, the two services share a
+# cookie scope.
 #
 # Cookies are scoped per hostname. Marketing and Operations issue their own
 # session cookies on their own subdomains, so neither can read the other's.
@@ -47,6 +55,14 @@ server {
     # nobody ever learns was sent - so these are proxied to the owning service
     # until each provider is re-registered against its subdomain. Narrow exact
     # prefixes only; the apex still serves a static page for everything else.
+    # PERMANENT. The internal service API is never public on any hostname.
+    # Without this the apex answers /internal/ with 200 and the landing page:
+    # no data is exposed while root is a static file, but this vhost also
+    # proxies provider callbacks, so a 200 here becomes a real hole the moment
+    # anyone widens one of those locations. Do not remove with temporary
+    # cutover scaffolding - it was lost that way once already.
+    location ^~ /internal/ { return 404; }
+
     location ^~ /webhooks/whatsapp {
         proxy_pass http://127.0.0.1:8110;
         proxy_http_version 1.1;
@@ -64,6 +80,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
     location ^~ /api/gmail/pubsub/ {
+        # The Pub/Sub verification token travels in the query string, so
+        # logging this route writes a live shared secret to disk.
+        access_log off;
         proxy_pass http://127.0.0.1:8210;
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
@@ -74,7 +93,18 @@ server {
 
     location ^~ /call/join/   { return 301 https://marketing.teleautomation.online$request_uri; }
     location ^~ /voice/join/  { return 301 https://marketing.teleautomation.online$request_uri; }
-    location ^~ /submit-slot  { return 301 https://operations.teleautomation.online$request_uri; }
+    # submit-slot is served ON the apex, not redirected away from it. Candidates
+    # are given apex links; a 301 breaks the flow the moment one is opened from
+    # a client that does not follow redirects on POST. Scoped deliberately: the
+    # SPA entry point and only the paths it needs. /api/ is NOT proxied here.
+    location = /submit-slot  { proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    location = /submit-slot/ { proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ^~ /assets/     { proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ^~ /public/     { client_max_body_size 50m; proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+    # /bookings/confirm is the only public booking-creation boundary. Without
+    # this the page loads on the apex but the final "Confirm booking" POST 404s
+    # into the static landing page.
+    location ^~ /bookings/   { client_max_body_size 50m; proxy_pass http://127.0.0.1:8210; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
 
     location / {
         try_files $uri $uri/ /index.html;
@@ -151,6 +181,26 @@ server {
     client_max_body_size 50m;
 
     location ^~ /internal/ { return 404; }
+
+    # Google Pub/Sub pushes Gmail notifications here. It is a machine-to-machine
+    # caller holding no dashboard session, so it is deliberately unauthenticated
+    # at this layer - the endpoint itself compares
+    # GMAIL_PUBSUB_VERIFICATION_TOKEN with hmac.compare_digest before touching a
+    # mailbox, which is the actual authentication. Exact match, so no sibling
+    # API path is opened up.
+    location = /api/gmail/pubsub/push {
+        # The verification token travels in the query string (Pub/Sub push
+        # cannot send custom headers), so logging this route would write a live
+        # shared secret to disk on every push and into any backup that follows.
+        # The application logs the delivery itself, so nothing is lost.
+        access_log off;
+        proxy_pass http://127.0.0.1:8210;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8210;
