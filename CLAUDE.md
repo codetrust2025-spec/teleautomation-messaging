@@ -68,9 +68,17 @@ It stops on a **merge conflict** rather than guessing: resolving one means
 choosing which side of the change survives, and that is not a decision to
 automate.
 
-Re-running is safe. Every mutating stage asks the remote whether its effect is
-already there, so a restart never opens a second PR, repeats a merge, or
-redeploys work already done.
+Re-running is safe, and not only because progress is recorded locally. Every
+mutating stage asks the *remote* whether its effect is already there — branch
+already merged, PR already open, anchor already moved, and production already
+serving the target commit — so the skips survive losing the local state file.
+
+`build` and `deploy` check production directly: the live `/version` must equal
+the target commit, `8000/tcp` must be bound to `127.0.0.1:8210`, and every
+container in the project must be healthy. All three, because a healthy
+container with no 8210 binding still serves 502 through nginx. If they hold,
+both stages skip and `verify` still runs; if any fails, the deploy proceeds
+normally.
 
 This repository holds no environment specifics — hostnames and paths come from
 the environment (`KVM1_SSH`, `KVM1_SSH_KEY`, `PROD_ENV_FILE`), never from
