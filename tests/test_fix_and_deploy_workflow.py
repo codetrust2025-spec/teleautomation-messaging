@@ -31,7 +31,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "fix_and_deploy.sh"
 INSTRUCTIONS = ROOT / "CLAUDE.md"
 
-STAGES = ["preflight", "pin", "pin_ci", "pin_merge", "sync", "build", "deploy", "verify"]
+STAGES = [
+    "ops_pr", "ops_ci", "ops_merge",
+    "preflight", "pin", "pin_ci", "pin_merge",
+    "sync", "build", "deploy", "verify",
+]
 
 
 def script() -> str:
@@ -180,27 +184,81 @@ def test_dry_run_prints_the_plan_and_changes_nothing():
     assert before == after, "--dry-run modified the working tree"
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
-def test_it_will_not_run_without_a_target():
-    result = subprocess.run(
+def _run(**env):
+    clean = {k: v for k, v in os.environ.items()
+             if k not in {"OPERATIONS_SHA", "OPERATIONS_BRANCH", "KVM1_SSH"}}
+    return subprocess.run(
         ["bash", str(SCRIPT)],
         capture_output=True, text=True, check=False,
-        env={k: v for k, v in os.environ.items() if k not in {"OPERATIONS_SHA", "KVM1_SSH"}},
+        env={**clean, **{k: v for k, v in env.items() if v is not None}},
         cwd=str(ROOT),
     )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
+def test_it_will_not_run_without_a_target():
+    result = _run()
     assert result.returncode != 0
-    assert "OPERATIONS_SHA" in result.stderr
+    assert "OPERATIONS_BRANCH" in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
 def test_it_rejects_a_short_sha():
     """A short sha would pass a naive check and then fail against the anchor,
-    which compares full hashes."""
-    result = subprocess.run(
-        ["bash", str(SCRIPT)],
-        capture_output=True, text=True, check=False,
-        env={**os.environ, "OPERATIONS_SHA": "53f6675", "KVM1_SSH": "nobody@invalid"},
-        cwd=str(ROOT),
-    )
+    which compares full hashes.
+
+    Arguments are checked before the environment, so this reports the malformed
+    sha rather than whatever else happens to be missing. CI has no Operations
+    checkout beside this repository, and the first version of this script
+    checked for that first - so the run died with 'Operations repo not found'
+    and this test failed while describing the wrong problem entirely.
+    """
+    result = _run(OPERATIONS_SHA="53f6675", KVM1_SSH="nobody@invalid")
     assert result.returncode != 0
     assert "40-character" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
+def test_a_branch_alone_is_a_valid_target():
+    """The whole point of the extension: hand it a branch and it opens the
+    Operations PR itself. It must get past argument validation without a sha."""
+    result = _run(OPERATIONS_BRANCH="fix/anything")
+    assert "OPERATIONS_BRANCH" not in result.stderr, result.stderr
+    assert "KVM1_SSH" in result.stderr, "should now be asking for the next missing thing"
+
+
+def test_it_opens_the_operations_pr_from_the_branch_commits():
+    """A generated description should quote the commits, which were written to
+    explain the change, rather than invent a summary of them."""
+    body = script()
+    assert "run_ops_pr()" in body
+    assert "origin/main..origin/$OPERATIONS_BRANCH" in body
+    assert "pr create" in body
+
+
+def test_rerunning_never_opens_a_second_pr_or_repeats_a_merge():
+    """Idempotency is the property that makes resuming safe. Each mutating
+    stage asks the remote whether its effect is already present."""
+    body = script()
+    assert "already merged into main" in body
+    assert "already open — reusing it" in body
+    assert "pin PR already open — reusing it" in body
+    assert "anchor on main is already" in body
+
+
+def test_the_resolved_commit_survives_a_resume():
+    """If the merge commit were re-derived on resume, the deploy half could
+    drift onto a different commit than the one that was merged."""
+    body = script()
+    assert "SHA_FILE=" in body
+    assert '> "$SHA_FILE"' in body
+    assert 'cat "$SHA_FILE"' in body
+
+
+def test_a_merge_conflict_stops_rather_than_guessing():
+    """Resolving a conflict means choosing which side of the change survives.
+    That is not a decision to automate."""
+    body = script()
+    assert "mergeStateStatus" in body
+    assert "DIRTY" in body
+    assert "merge conflict" in body
