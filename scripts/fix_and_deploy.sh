@@ -278,13 +278,45 @@ echo "  checkouts synced; anchor matches head"
 REMOTE
 }
 
+# Is production already serving exactly what this run would produce?
+#
+# The recorded stage list makes a resumed run skip work, but that record is
+# local: delete it and the script would rebuild and recreate a container that
+# is already correct, costing a needless restart of a healthy service. This
+# asks production directly, so the skip survives losing local state.
+#
+# All three conditions matter. Matching /version alone is not enough: a healthy
+# container with no 8210 binding still serves 502 through nginx, and a
+# container outside this compose project is not the one a deploy would replace.
+production_matches_target() {
+  [ -n "$OPERATIONS_SHA" ] || return 1
+  "${SSH[@]}" bash -s -- "$OPERATIONS_SHA" "$COMPOSE_PROJECT" "$HEALTH_URL" <<'REMOTE' >/dev/null 2>&1
+set -euo pipefail
+WANT="$1"; PROJECT="$2"; HEALTH="$3"
+GOT=$(curl -s -m 10 "$HEALTH/version" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p')
+[ "$GOT" = "$WANT" ] || exit 1
+docker port "${PROJECT}-operations-api-1" 8000/tcp 2>/dev/null | grep -q '127.0.0.1:8210' || exit 1
+TOTAL=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Status}}' | wc -l)
+OK=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Status}}' | grep -c healthy)
+[ "$TOTAL" -gt 0 ] && [ "$OK" = "$TOTAL" ]
+REMOTE
+}
+
 run_build() {
+  if production_matches_target; then
+    say "production already serves ${OPERATIONS_SHA:0:7}, bound and healthy — nothing to build"
+    return 0
+  fi
   "${SSH[@]}" "cd /opt/teleautomation/marketing && docker compose -p '$COMPOSE_PROJECT' \
     --env-file '$PROD_ENV_FILE' -f '$COMPOSE_FILE' build '$SERVICE'" >/dev/null || die "build failed"
   say "image built"
 }
 
 run_deploy() {
+  if production_matches_target; then
+    say "production already serves ${OPERATIONS_SHA:0:7}, bound and healthy — nothing to deploy"
+    return 0
+  fi
   "${SSH[@]}" "cd /opt/teleautomation/marketing && docker compose -p '$COMPOSE_PROJECT' \
     --env-file '$PROD_ENV_FILE' -f '$COMPOSE_FILE' up -d --no-deps '$SERVICE'" >/dev/null || die "deploy failed"
   say "container recreated"

@@ -255,6 +255,46 @@ def test_the_resolved_commit_survives_a_resume():
     assert 'cat "$SHA_FILE"' in body
 
 
+def test_build_and_deploy_ask_production_before_acting():
+    """The recorded stage list is local. Delete it and the script would rebuild
+    and recreate a container that is already correct, restarting a healthy
+    service for nothing. Both stages check production itself, so the skip
+    survives losing local state."""
+    body = script()
+    assert "production_matches_target()" in body, "no remote check exists"
+    for stage in ("run_build", "run_deploy"):
+        block = body.split(f"{stage}() {{", 1)[1].split("\n}", 1)[0]
+        assert "production_matches_target" in block, f"{stage} does not consult production"
+
+
+def test_the_remote_check_requires_version_binding_and_health():
+    """Matching /version alone is not enough: a healthy container with no 8210
+    binding still serves 502 through nginx, and a container outside this
+    compose project is not the one a deploy would replace."""
+    block = script().split("production_matches_target() {", 1)[1].split("\nREMOTE\n", 1)[0]
+    assert "/version" in block
+    assert "127.0.0.1:8210" in block
+    assert "com.docker.compose.project" in block
+    assert "healthy" in block
+
+
+def test_the_remote_check_refuses_when_no_commit_is_known():
+    """Without a resolved commit there is nothing to compare, and returning
+    'matches' would skip a deploy that had never happened."""
+    block = script().split("production_matches_target() {", 1)[1].split("\nREMOTE\n", 1)[0]
+    assert '[ -n "$OPERATIONS_SHA" ] || return 1' in block
+
+
+def test_verify_still_runs_when_build_and_deploy_are_skipped():
+    """Skipping work must not skip the check that production is actually
+    right — that is the only stage proving the claim."""
+    body = script()
+    verify_block = body.split("run_verify() {", 1)[1].split("\nREMOTE\n", 1)[0]
+    assert "production_matches_target" not in verify_block, (
+        "verify must not short-circuit on the same check it exists to make"
+    )
+
+
 def test_a_merge_conflict_stops_rather_than_guessing():
     """Resolving a conflict means choosing which side of the change survives.
     That is not a decision to automate."""
