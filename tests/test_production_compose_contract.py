@@ -47,6 +47,15 @@ def test_company_payment_receiver_environment_is_explicit() -> None:
         assert declaration in COMPOSE
 
 
+def test_operations_attendance_network_policy_is_server_side_and_explicit() -> None:
+    for declaration in (
+        "OPERATIONS_OFFICE_NETWORK_CIDRS: ${OPERATIONS_OFFICE_NETWORK_CIDRS:-}",
+        "OPERATIONS_TRUSTED_PROXY_CIDRS: ${OPERATIONS_TRUSTED_PROXY_CIDRS:-}",
+        "OPERATIONS_ATTENDANCE_EFFECTIVE_DATE: ${OPERATIONS_ATTENDANCE_EFFECTIVE_DATE:-}",
+    ):
+        assert declaration in COMPOSE
+
+
 def test_marketing_sessions_use_the_persistent_data_volume() -> None:
     assert "MARKETING_DATA_DIR: /var/lib/teleautomation-marketing" in COMPOSE
     assert "TELEGRAM_SESSION_DIR: /var/lib/teleautomation-marketing" in COMPOSE
