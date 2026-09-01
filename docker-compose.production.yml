@@ -200,6 +200,13 @@ services:
       DASHBOARD_COOKIE_SECURE: "true"
       TELEAUTOMATION_SAFE_UI_MODE: "false"
 
+      # Attendance accepts a client address only through the explicitly
+      # trusted reverse proxy and fails closed when the approved office policy
+      # is absent. Values live only in the protected host environment.
+      OPERATIONS_OFFICE_NETWORK_CIDRS: ${OPERATIONS_OFFICE_NETWORK_CIDRS:-}
+      OPERATIONS_TRUSTED_PROXY_CIDRS: ${OPERATIONS_TRUSTED_PROXY_CIDRS:-}
+      OPERATIONS_ATTENDANCE_EFFECTIVE_DATE: ${OPERATIONS_ATTENDANCE_EFFECTIVE_DATE:-}
+
       # Decrypts stored mailbox credentials. Carried from the monolith, never
       # regenerated: a new key makes every saved mailbox credential
       # undecryptable, and the failure looks like the mailboxes were lost.
