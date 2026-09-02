@@ -128,6 +128,41 @@ branch_is_merged() {
   git -C "$OPS_REPO" merge-base --is-ancestor "origin/$OPERATIONS_BRANCH" origin/main 2>/dev/null
 }
 
+# How long to wait for a pull request's checks to exist before giving up.
+CHECKS_APPEAR_TIMEOUT="${CHECKS_APPEAR_TIMEOUT:-240}"
+
+# Wait until a pull request actually has checks, before watching them.
+#
+# `gh pr checks --watch` exits 0 when a pull request has no checks at all: it
+# prints "no checks reported" and returns success. Immediately after `pr create`
+# the workflow has usually not registered yet, so a watch that starts in that
+# window reports green for a run that never happened, and the next stage merges.
+#
+# This is not hypothetical. Opening a pull request here and watching it one
+# second later returned exit 0 with no checks, and the run appeared seconds
+# after that. The window is small, which is what makes it dangerous: it is a
+# race that passes almost every time.
+#
+# Timing out is a failure, not a pass. A pull request that never registers a
+# check has not been verified, and merging it would put an unverified commit on
+# main and then into production.
+await_checks() {
+  local what="$1"; shift
+  local waited=0 out
+  while :; do
+    out="$("$@" 2>&1 || true)"
+    case "$out" in
+      "" | *"no checks reported"*) : ;;
+      *) return 0 ;;
+    esac
+    if [ "$waited" -ge "$CHECKS_APPEAR_TIMEOUT" ]; then
+      die "$what registered no checks within ${CHECKS_APPEAR_TIMEOUT}s - refusing to treat an absent run as a pass"
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+}
+
 # ── ops_pr ──────────────────────────────────────────────────────────────────
 run_ops_pr() {
   if [ -z "$OPERATIONS_BRANCH" ]; then
@@ -165,6 +200,7 @@ run_ops_ci() {
     return 0
   fi
   say "polling Operations checks"
+  await_checks "Operations PR $OPERATIONS_BRANCH" ops_gh pr checks "$OPERATIONS_BRANCH"
   ops_gh pr checks "$OPERATIONS_BRANCH" --watch --interval 20 >/dev/null \
     || die "Operations CI did not pass — read the run before retrying"
   say "Operations CI green"
@@ -236,7 +272,11 @@ run_pin() {
 
 run_pin_ci() {
   if [ "$(current_anchor)" = "$OPERATIONS_SHA" ]; then say "already pinned"; return 0; fi
-  say "polling pin checks (dual-service is the slow one)"
+  # Which lane the pin takes is decided in CI, not here: a pin of a
+  # frontend-only Operations range runs the compose and contract checks, and
+  # anything else runs the full pipeline including dual-service.
+  say "polling pin checks"
+  await_checks "pin PR $(pin_branch)" gh pr checks "$(pin_branch)"
   gh pr checks "$(pin_branch)" --watch --interval 20 >/dev/null \
     || die "pin CI did not pass — read the run before retrying"
   say "pin CI green"
