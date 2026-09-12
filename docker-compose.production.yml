@@ -24,7 +24,7 @@ name: teleautomation-production
 # approved production release. The source checkout must still be verified at
 # this exact commit before any build.
 x-release-shas:
-  operations: &operations-release c1ad62a1377f7f0ae01abf89fc132c0d113b8bbe
+  operations: &operations-release 9e530b7c0ae67f471430948fe1a34552ace5642f
 
 x-capped-logs: &capped
   driver: json-file
