@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# `docker compose` for the production project, with every file it needs.
+#
+#   teleautomation-compose ps
+#   teleautomation-compose logs --tail 50 operations-api
+#
+# Once CI deploys are live, the Operations image is named in
+# /etc/teleautomation/operations-release.env, next to the secrets file. A compose
+# command run without that second file resolves the old host-built image name
+# instead, and `up` would replace the verified release with it. This wrapper
+# always passes both, so a hand-typed command cannot quietly roll production
+# back. Installed for root only; the deploy key cannot reach it.
+set -euo pipefail
+
+ENV_FILE="${TA_ENV_FILE:-/etc/teleautomation-production.env}"
+RELEASE_FILE="${TA_RELEASE_DIR:-/etc/teleautomation}/operations-release.env"
+COMPOSE="${TA_COMPOSE_DIR:-/opt/teleautomation/marketing}/${TA_COMPOSE_FILE:-docker-compose.production.yml}"
+
+args=(-p "${TA_COMPOSE_PROJECT:-teleautomation-production}" --env-file "$ENV_FILE")
+[ -f "$RELEASE_FILE" ] && args+=(--env-file "$RELEASE_FILE")
+exec docker compose "${args[@]}" -f "$COMPOSE" "$@"

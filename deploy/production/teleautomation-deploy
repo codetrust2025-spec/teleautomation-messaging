@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+# Make a CI-built Operations image live on this host.
+#
+#   teleautomation-deploy verify   <sha> <digest>   pull and inspect only; nothing restarts
+#   teleautomation-deploy deploy   <sha> <digest>   pull, restart, verify; roll back on failure
+#   teleautomation-deploy rollback                  restore the previous release
+#   teleautomation-deploy status                    what is recorded and what is serving
+#   teleautomation-deploy init                      record the running container as the release
+#
+# Reached two ways:
+#
+#   - Over SSH, as the forced command of the key GitHub Actions holds. The
+#     request arrives in SSH_ORIGINAL_COMMAND. It is split on whitespace and
+#     never evaluated, re-executed as root through a single sudo rule, and every
+#     word is validated again there. The key can do nothing else.
+#   - By root on the host, for rollback and status without GitHub.
+#
+# `verify` and `deploy` read two lines on stdin: a registry username and a
+# registry token. They are used for one pull through a throwaway Docker config
+# that is deleted immediately, so no registry credential is ever stored here.
+# GitHub Actions sends the job's own GITHUB_TOKEN, which expires with the job.
+#
+# The image is addressed by digest, under a fixed repository, so a request can
+# name which build to run but never where to fetch it from. Before anything
+# restarts, the image's revision label and baked RELEASE_SHA must both equal
+# the requested commit. After the restart the container must be running that
+# exact image, report that commit on /version, be healthy with every other
+# container, keep its loopback port, and serve the public site. Any failure
+# restores the previous release and verifies that instead.
+set -euo pipefail
+umask 077
+
+COMPOSE_DIR="${TA_COMPOSE_DIR:-/opt/teleautomation/marketing}"
+COMPOSE_FILE="${TA_COMPOSE_FILE:-docker-compose.production.yml}"
+PROJECT="${TA_COMPOSE_PROJECT:-teleautomation-production}"
+ENV_FILE="${TA_ENV_FILE:-/etc/teleautomation-production.env}"
+RELEASE_DIR="${TA_RELEASE_DIR:-/etc/teleautomation}"
+IMAGE_REPO="${TA_IMAGE_REPO:-ghcr.io/codetrust2025-spec/teleautomation-operations}"
+REGISTRY="${IMAGE_REPO%%/*}"
+LOCAL_IMAGE="${TA_LOCAL_IMAGE:-teleautomation-production-operations-api}"
+HEALTH_URL="${TA_HEALTH_URL:-http://127.0.0.1:8210}"
+PUBLIC_URL="${TA_PUBLIC_URL:-https://operations.teleautomation.online/}"
+LOCK_FILE="${TA_LOCK_FILE:-/run/lock/teleautomation-deploy.lock}"
+LOG_FILE="${TA_LOG_FILE:-/var/log/teleautomation-deploy.log}"
+HEALTH_WAIT_SECONDS="${TA_HEALTH_WAIT_SECONDS:-180}"
+POLL_SECONDS="${TA_POLL_SECONDS:-2}"
+SELF="${TA_SELF:-/usr/local/sbin/teleautomation-deploy}"
+
+SERVICE=operations-api
+CONTAINER="${PROJECT}-${SERVICE}-1"
+RELEASE_FILE="$RELEASE_DIR/operations-release.env"
+PREVIOUS_FILE="$RELEASE_DIR/operations-release.previous.env"
+
+say() { printf '  %s\n' "$*"; }
+die() { printf 'FAILED: %s\n' "$*" >&2; exit 1; }
+usage() {
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+# ── entry over SSH ──────────────────────────────────────────────────────────
+if [ "$(id -u)" != 0 ]; then
+  [ -n "${SSH_ORIGINAL_COMMAND:-}" ] || die "run as root, or through the deploy key"
+  # Split, never evaluate. read -a performs no expansion of any kind, so
+  # $(...), backticks, globs and semicolons stay literal words, and the root
+  # half below rejects anything that is not exactly a verb, a sha and a digest.
+  read -r -a words <<< "$SSH_ORIGINAL_COMMAND"
+  [ "${#words[@]}" -ge 1 ] && [ "${#words[@]}" -le 3 ] || die "expected: <verb> [<sha> <digest>]"
+  exec sudo -n "$SELF" "${words[@]}"
+fi
+
+# ── arguments ───────────────────────────────────────────────────────────────
+VERB="${1:-}"
+SHA=""
+DIGEST=""
+case "$VERB" in
+  verify|deploy)
+    [ "$#" -eq 3 ] || usage
+    SHA="$2"
+    DIGEST="$3"
+    [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "sha must be 40 lowercase hex characters"
+    [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "digest must be sha256: followed by 64 lowercase hex characters"
+    ;;
+  rollback|status|init)
+    [ "$#" -eq 1 ] || usage
+    ;;
+  *)
+    usage
+    ;;
+esac
+REF="$IMAGE_REPO@$DIGEST"
+
+compose() {
+  local env_args=(--env-file "$ENV_FILE")
+  [ -f "$RELEASE_FILE" ] && env_args+=(--env-file "$RELEASE_FILE")
+  docker compose -p "$PROJECT" "${env_args[@]}" -f "$COMPOSE_DIR/$COMPOSE_FILE" "$@"
+}
+
+log_result() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  printf '%s verb=%s sha=%s digest=%s result=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERB" "${SHA:--}" "${DIGEST:--}" "$1" >> "$LOG_FILE"
+}
+
+release_value() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1; }
+
+served_sha() {
+  curl -s -m 10 "$HEALTH_URL/version" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p'
+}
+
+take_lock() {
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  exec 9>"$LOCK_FILE"
+  flock -n 9 || die "another deploy holds $LOCK_FILE"
+  # The host-build path in scripts/fix_and_deploy.sh does not take this lock,
+  # so check for its build and compose processes directly as well.
+  if ps -eo args | grep -E '^docker (compose|build)' | grep -v grep >/dev/null; then
+    die "a docker compose or build process is already running on this host"
+  fi
+}
+
+# ── registry ────────────────────────────────────────────────────────────────
+pull_and_inspect() {
+  local user token config revision baked
+  IFS= read -r user || true
+  IFS= read -r token || true
+  # A line typed or piped from Windows ends in CR; it is never part of either value.
+  user="${user%$'\r'}"
+  token="${token%$'\r'}"
+  [ -n "$user" ] && [ -n "$token" ] || die "a registry username and token are required on stdin"
+  [[ "$user" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$ ]] || die "the registry username is not a GitHub login"
+
+  config="$(mktemp -d)"
+  # The token only ever travels on stdin: never argv, where `ps` shows it, and
+  # never a file that outlives this function.
+  if ! printf '%s' "$token" | docker --config "$config" login "$REGISTRY" -u "$user" --password-stdin >/dev/null 2>&1; then
+    rm -rf "$config"
+    die "registry login failed"
+  fi
+  unset token
+  if ! docker --config "$config" pull --quiet "$REF" >/dev/null; then
+    docker --config "$config" logout "$REGISTRY" >/dev/null 2>&1 || true
+    rm -rf "$config"
+    die "could not pull $REF"
+  fi
+  docker --config "$config" logout "$REGISTRY" >/dev/null 2>&1 || true
+  rm -rf "$config"
+
+  revision="$(docker image inspect "$REF" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+  baked="$(docker image inspect "$REF" --format '{{ range .Config.Env }}{{ println . }}{{ end }}' | sed -n 's/^RELEASE_SHA=//p' | head -1)"
+  [ "$revision" = "$SHA" ] || die "image revision label is '${revision:-none}', expected $SHA"
+  [ "$baked" = "$SHA" ] || die "image RELEASE_SHA is '${baked:-none}', expected $SHA"
+  say "pulled ${REF#*@} and it was built from ${SHA:0:7}"
+}
+
+# ── verification ────────────────────────────────────────────────────────────
+# Everything fix_and_deploy.sh verified, plus that the container is running the
+# exact image that was requested rather than merely reporting the right commit.
+verify_live() {
+  local want_sha="$1" want_image="$2" waited=0 status running got total healthy code
+  while :; do
+    status="$(docker inspect "$CONTAINER" --format '{{ if .State.Health }}{{ .State.Health.Status }}{{ end }}' 2>/dev/null || true)"
+    [ "$status" = healthy ] && break
+    [ "$waited" -ge "$HEALTH_WAIT_SECONDS" ] && { echo "  container not healthy after ${HEALTH_WAIT_SECONDS}s (status=${status:-missing})" >&2; return 1; }
+    sleep "$POLL_SECONDS"
+    waited=$((waited + POLL_SECONDS))
+  done
+  say "healthy after ${waited}s"
+
+  running="$(docker inspect "$CONTAINER" --format '{{ .Image }}' 2>/dev/null || true)"
+  [ -n "$running" ] && [ "$running" = "$want_image" ] || { echo "  running image ${running:-none} is not the requested ${want_image}" >&2; return 1; }
+
+  got="$(served_sha)"
+  [ "$got" = "$want_sha" ] || { echo "  /version is ${got:-none}, expected $want_sha" >&2; return 1; }
+  say "/version  ${got:0:7}"
+
+  curl -s -m 10 "$HEALTH_URL/health" | grep -q '"status":"ok"' || { echo "  /health is not ok" >&2; return 1; }
+  say "health    ok"
+
+  docker port "$CONTAINER" 8000/tcp 2>/dev/null | grep -q "127.0.0.1:${HEALTH_URL##*:}" \
+    || { echo "  $CONTAINER lost its 127.0.0.1:${HEALTH_URL##*:} binding" >&2; return 1; }
+
+  total="$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{ .Status }}' | wc -l | tr -d ' ')"
+  # "(healthy)" with its parentheses: a bare `grep -c healthy` also counts
+  # "(unhealthy)", which is the one status this check exists to catch.
+  healthy="$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{ .Status }}' | grep -c '(healthy)' || true)"
+  [ "$total" -gt 0 ] && [ "$healthy" = "$total" ] || { echo "  only $healthy/$total containers healthy" >&2; return 1; }
+  say "containers $healthy/$total healthy"
+
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m 15 "$PUBLIC_URL" || true)"
+  [ "$code" = 200 ] || { echo "  public returned ${code:-nothing}" >&2; return 1; }
+  say "public    200"
+}
+
+image_id() { docker image inspect "$1" --format '{{ .Id }}' 2>/dev/null || true; }
+
+restart_with() {
+  # --no-build and --pull never: production never builds and never fetches
+  # anything the release file did not already name and this script did not
+  # already verify.
+  compose up -d --no-deps --no-build --pull never "$SERVICE" >/dev/null
+}
+
+write_release() {
+  local target="$1" image="$2" sha="$3" digest="$4" tmp
+  tmp="$(mktemp "$RELEASE_DIR/.release.XXXXXX")"
+  printf 'OPERATIONS_IMAGE=%s\nOPERATIONS_RELEASE_SHA=%s\nOPERATIONS_RELEASE_DIGEST=%s\n' \
+    "$image" "$sha" "$digest" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$target"
+}
+
+require_initialised() {
+  [ -f "$RELEASE_FILE" ] || die "no release is recorded yet; run 'teleautomation-deploy init' as root first"
+}
+
+# ── verbs ───────────────────────────────────────────────────────────────────
+case "$VERB" in
+  status)
+    for f in "$RELEASE_FILE" "$PREVIOUS_FILE"; do
+      if [ -f "$f" ]; then
+        say "$(basename "$f"): $(release_value "$f" OPERATIONS_RELEASE_SHA | cut -c1-7) $(release_value "$f" OPERATIONS_IMAGE)"
+      else
+        say "$(basename "$f"): none"
+      fi
+    done
+    serving="$(served_sha)"
+    say "serving: ${serving:-unreachable}"
+    recorded="$(release_value "$RELEASE_FILE" OPERATIONS_RELEASE_SHA)"
+    if [ -n "$recorded" ] && [ "$recorded" != "$serving" ]; then
+      say "WARNING: the recorded release is not what is serving"
+      exit 1
+    fi
+    ;;
+
+  init)
+    take_lock
+    mkdir -p "$RELEASE_DIR"
+    if [ -f "$RELEASE_FILE" ]; then
+      say "a release is already recorded; nothing to do"
+      exit 0
+    fi
+    live_sha="$(served_sha)"
+    [[ "$live_sha" =~ ^[0-9a-f]{40}$ ]] || die "/version did not report a commit (got '${live_sha:-nothing}')"
+    live_image="$(docker inspect "$CONTAINER" --format '{{ .Image }}')"
+    tag="$LOCAL_IMAGE:release-$live_sha"
+    docker tag "$live_image" "$tag"
+    candidate="$(mktemp "$RELEASE_DIR/.candidate.XXXXXX")"
+    printf 'OPERATIONS_IMAGE=%s\n' "$tag" > "$candidate"
+    # The compose file on this host must already resolve the image from the
+    # release file. If it does not, recording a release would claim a control
+    # that does not exist yet.
+    resolved="$(docker compose -p "$PROJECT" --env-file "$ENV_FILE" --env-file "$candidate" \
+      -f "$COMPOSE_DIR/$COMPOSE_FILE" config --images 2>/dev/null | grep -Fx "$tag" || true)"
+    rm -f "$candidate"
+    [ "$resolved" = "$tag" ] || die "the host compose file does not read OPERATIONS_IMAGE yet; deploy once through scripts/fix_and_deploy.sh first"
+    write_release "$RELEASE_FILE" "$tag" "$live_sha" ""
+    write_release "$PREVIOUS_FILE" "$tag" "$live_sha" ""
+    log_result "initialised-at-${live_sha:0:7}"
+    say "recorded the running container (${live_sha:0:7}) as the current and previous release"
+    ;;
+
+  verify)
+    take_lock
+    pull_and_inspect
+    candidate="$(mktemp "$RELEASE_DIR/.candidate.XXXXXX" 2>/dev/null || mktemp)"
+    printf 'OPERATIONS_IMAGE=%s\n' "$REF" > "$candidate"
+    resolved="$(docker compose -p "$PROJECT" --env-file "$ENV_FILE" --env-file "$candidate" \
+      -f "$COMPOSE_DIR/$COMPOSE_FILE" config --images 2>/dev/null | grep -Fx "$REF" || true)"
+    rm -f "$candidate"
+    [ "$resolved" = "$REF" ] || die "the host compose file does not resolve OPERATIONS_IMAGE to the pulled image"
+    log_result verified
+    say "verified; nothing was restarted"
+    ;;
+
+  deploy)
+    take_lock
+    require_initialised
+    pull_and_inspect
+    want_image="$(image_id "$REF")"
+
+    current_image="$(release_value "$RELEASE_FILE" OPERATIONS_IMAGE)"
+    if [ "$current_image" != "$REF" ]; then
+      # Re-deploying the same image must not overwrite the real previous
+      # release with itself.
+      cp -p "$RELEASE_FILE" "$PREVIOUS_FILE"
+    fi
+    write_release "$RELEASE_FILE" "$REF" "$SHA" "$DIGEST"
+
+    if restart_with && verify_live "$SHA" "$want_image"; then
+      log_result live
+      say "${SHA:0:7} is live"
+      exit 0
+    fi
+
+    echo "  ${SHA:0:7} failed verification; restoring the previous release" >&2
+    prev_image="$(release_value "$PREVIOUS_FILE" OPERATIONS_IMAGE)"
+    prev_sha="$(release_value "$PREVIOUS_FILE" OPERATIONS_RELEASE_SHA)"
+    if [ "$prev_image" = "$REF" ] || [ -z "$(image_id "$prev_image")" ]; then
+      log_result "failed-no-rollback-target"
+      die "no usable previous release to restore; production needs attention"
+    fi
+    cp -p "$PREVIOUS_FILE" "$RELEASE_FILE"
+    if restart_with && verify_live "$prev_sha" "$(image_id "$prev_image")"; then
+      log_result "failed-rolled-back-to-${prev_sha:0:7}"
+      die "${SHA:0:7} did not verify; rolled back to ${prev_sha:0:7}, which is live and verified"
+    fi
+    log_result "failed-rollback-failed"
+    printf 'FAILED: %s did not verify AND the rollback to %s did not verify either\n' "${SHA:0:7}" "${prev_sha:0:7}" >&2
+    exit 3
+    ;;
+
+  rollback)
+    take_lock
+    require_initialised
+    [ -f "$PREVIOUS_FILE" ] || die "no previous release is recorded"
+    prev_image="$(release_value "$PREVIOUS_FILE" OPERATIONS_IMAGE)"
+    prev_sha="$(release_value "$PREVIOUS_FILE" OPERATIONS_RELEASE_SHA)"
+    SHA="$prev_sha"
+    target_image="$(image_id "$prev_image")"
+    [ -n "$target_image" ] || die "the previous image $prev_image is not on this host; redeploy that commit from GitHub instead"
+    swap="$(mktemp "$RELEASE_DIR/.swap.XXXXXX")"
+    cp -p "$RELEASE_FILE" "$swap"
+    cp -p "$PREVIOUS_FILE" "$RELEASE_FILE"
+    mv -f "$swap" "$PREVIOUS_FILE"
+    if restart_with && verify_live "$prev_sha" "$target_image"; then
+      log_result "rolled-back"
+      say "rolled back to ${prev_sha:0:7}"
+      exit 0
+    fi
+    log_result "rollback-failed"
+    die "rollback to ${prev_sha:0:7} did not verify; production needs attention"
+    ;;
+esac

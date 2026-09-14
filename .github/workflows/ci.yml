@@ -300,95 +300,14 @@ jobs:
           ref: ${{ steps.peerref.outputs.ref }}
           token: ${{ secrets.PEER_REPO_TOKEN }}
           path: teleautomation-business
-      - name: Run dual-service verification
+      # The three verifications -- dual-service contracts, the staging stack
+      # over HTTP, and the backup/restore/rollback rehearsal -- live in one
+      # script that Operations CI runs too, so both repositories verify the
+      # same thing. It tears its stacks down on exit, pass or fail.
+      - name: Cross-repository verification
         if: steps.peer.outputs.available == 'true'
         working-directory: teleautomation-messaging
-        run: bash scripts/dual_service_test.sh
-      - name: Tear down
-        if: always() && steps.peer.outputs.available == 'true'
-        working-directory: teleautomation-messaging
-        run: docker compose -f docker-compose.dual.yml down -v
-
-      # The staging stack adds TLS termination and two public hostnames on top
-      # of the dual-service stack. Automatic certificates need a public IP that
-      # CI does not have, but everything that actually breaks on first deploy --
-      # the compose wiring, the migrations, the release SHA baked into the
-      # image, the reverse proxy and the WebSocket upgrade -- is testable here
-      # over plain HTTP against the same files. Finding those now is far cheaper
-      # than finding them once a host exists.
-      - name: Validate the staging stack over plain HTTP
-        if: steps.peer.outputs.available == 'true'
-        working-directory: teleautomation-messaging
-        env:
-          STAGING_IP: 127.0.0.1
-          MARKETING_SITE: http://marketing.test
-          OPERATIONS_SITE: http://operations.test
-          MARKETING_DB_PASSWORD: ci-marketing-db
-          OPERATIONS_DB_PASSWORD: ci-operations-db
-          INTERNAL_SERVICE_TOKEN: ci-internal-token
-          MARKETING_DASHBOARD_PASSWORD: ci-marketing-dash
-          MARKETING_AUTH_SECRET: ci-marketing-secret
-          OPERATIONS_DASHBOARD_PASSWORD: ci-operations-dash
-          OPERATIONS_AUTH_SECRET: ci-operations-secret
-        run: |
-          set -euo pipefail
-          export RELEASE_SHA_MARKETING="${{ github.sha }}"
-          export RELEASE_SHA_OPERATIONS=peer-under-test
-          # --profile edge starts Caddy. This job exercises the standalone
-          # topology where staging owns 80/443; without the profile Caddy is
-          # skipped and every proxy assertion below tests nothing.
-          docker compose -f docker-compose.staging.yml --profile edge up -d --build
-          bash scripts/staging_stack_check.sh
-
-      # Backup, restore and rollback are STAGING VERIFIED gates. Exercising them
-      # here means they are known to work before a host exists, rather than
-      # being discovered broken at the moment they are needed.
-      - name: Verify backup, restore and rollback
-        if: steps.peer.outputs.available == 'true'
-        working-directory: teleautomation-messaging
-        env:
-          STAGING_IP: 127.0.0.1
-          MARKETING_SITE: http://marketing.test
-          OPERATIONS_SITE: http://operations.test
-          MARKETING_DB_PASSWORD: ci-marketing-db
-          OPERATIONS_DB_PASSWORD: ci-operations-db
-          INTERNAL_SERVICE_TOKEN: ci-internal-token
-          MARKETING_DASHBOARD_PASSWORD: ci-marketing-dash
-          MARKETING_AUTH_SECRET: ci-marketing-secret
-          OPERATIONS_DASHBOARD_PASSWORD: ci-operations-dash
-          OPERATIONS_AUTH_SECRET: ci-operations-secret
-        run: |
-          set -euo pipefail
-          export RELEASE_SHA_MARKETING="${{ github.sha }}"
-          export RELEASE_SHA_OPERATIONS=peer-under-test
-          bash scripts/staging_backup.sh backups/ci
-          bash scripts/staging_restore.sh backups/ci
-
-          # Roll Marketing back one commit while Operations stays put. Beyond
-          # proving rollback works, this proves the two services are genuinely
-          # independently deployable: reverting one must not require touching
-          # the other, which is the property the whole split exists for.
-          PREV=$(git rev-parse HEAD~1)
-          MARKETING_SHA="$PREV" bash scripts/staging_rollback.sh
-
-          # Return to the release under test so the stack is left as found.
-          git checkout --quiet "${{ github.sha }}" 2>/dev/null || git checkout --quiet -
-          RELEASE_SHA_MARKETING="${{ github.sha }}" \
-            docker compose -f docker-compose.staging.yml up -d --build marketing-api
-
-      - name: Tear down the staging stack
-        if: always() && steps.peer.outputs.available == 'true'
-        working-directory: teleautomation-messaging
-        env:
-          STAGING_IP: 127.0.0.1
-          MARKETING_DB_PASSWORD: x
-          OPERATIONS_DB_PASSWORD: x
-          INTERNAL_SERVICE_TOKEN: x
-          MARKETING_DASHBOARD_PASSWORD: x
-          MARKETING_AUTH_SECRET: x
-          OPERATIONS_DASHBOARD_PASSWORD: x
-          OPERATIONS_AUTH_SECRET: x
-        run: docker compose -f docker-compose.staging.yml --profile edge down -v
+        run: bash scripts/ci_dual_service.sh
 
   # One check that always runs and always reflects the whole workflow.
   #
