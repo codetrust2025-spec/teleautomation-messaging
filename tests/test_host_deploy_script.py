@@ -337,6 +337,53 @@ class TestDeploy:
         assert "pull" not in host.calls()
 
 
+LOCAL_IMAGE = "teleautomation-production-operations-api:release-" + SHA
+
+
+class TestDeployLocal:
+    """The break-glass path: an image built on the host, released with the same
+    label checks, verification and rollback as a registry image."""
+
+    def test_a_host_built_image_is_released_without_touching_the_registry(self, host):
+        host.record(host.release, OLD_IMAGE, OTHER_SHA)
+        host.serving(OTHER_SHA, OLD_IMAGE)
+        result = host.run("deploy-local", SHA)
+        assert result.returncode == 0, result.stderr
+        assert f"OPERATIONS_IMAGE={LOCAL_IMAGE}" in host.release.read_text()
+        assert f"OPERATIONS_IMAGE={OLD_IMAGE}" in host.previous.read_text()
+        calls = host.calls()
+        # No registry: no login and no pull. (`up --pull never` is the restart.)
+        assert " login ghcr.io" not in calls and "pull --quiet" not in calls
+        assert "is live" in result.stdout
+
+    def test_a_missing_host_image_is_refused(self, host):
+        host.record(host.release, OLD_IMAGE, OTHER_SHA)
+        result = host.run("deploy-local", SHA, STUB_MISSING_IMAGES=LOCAL_IMAGE)
+        assert result.returncode != 0
+        assert "no host-built image" in result.stderr
+        assert " up " not in host.calls()
+
+    def test_a_host_image_from_another_commit_is_refused(self, host):
+        host.record(host.release, OLD_IMAGE, OTHER_SHA)
+        result = host.run("deploy-local", SHA, STUB_LABEL_REVISION=OTHER_SHA)
+        assert result.returncode != 0
+        assert "revision label" in result.stderr
+        assert " up " not in host.calls()
+
+    def test_a_failed_host_image_is_rolled_back(self, host):
+        host.record(host.release, OLD_IMAGE, OTHER_SHA)
+        host.serving(OTHER_SHA, OLD_IMAGE)
+        result = host.run("deploy-local", SHA, STUB_BROKEN_SHA=SHA)
+        assert result.returncode != 0
+        assert "rolled back to bbbbbbb" in result.stderr
+        assert f"OPERATIONS_IMAGE={OLD_IMAGE}" in host.release.read_text()
+
+    @pytest.mark.parametrize("args", [("deploy-local",), ("deploy-local", SHA, DIGEST), ("deploy-local", "abc")])
+    def test_it_takes_exactly_one_full_sha(self, host, args):
+        assert host.run(*args).returncode != 0
+        assert host.calls() == ""
+
+
 class TestRollbackAndInit:
     def test_rollback_restores_the_previous_release_and_verifies_it(self, host):
         host.record(host.release, REF, SHA, DIGEST)
