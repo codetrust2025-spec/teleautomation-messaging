@@ -179,6 +179,11 @@ services:
     logging: *capped
 
   operations-api:
+    # CI deploys pin the image by digest in /etc/teleautomation/operations-release.env
+    # (see deploy/production/teleautomation-deploy). Without that file this is
+    # the name the service has always had, so the host build in
+    # scripts/fix_and_deploy.sh behaves exactly as before.
+    image: ${OPERATIONS_IMAGE:-teleautomation-production-operations-api}
     build:
       context: ../teleautomation-business
       args:
@@ -299,6 +304,11 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
+      # Probe every 2s until the first success, so a restart is seen healthy
+      # seconds after uvicorn is up instead of at the next 15s interval.
+      # Failures in the first 90s do not count against `retries`.
+      start_period: 90s
+      start_interval: 2s
     logging: *capped
 
 volumes:

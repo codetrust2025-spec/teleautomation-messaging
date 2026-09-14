@@ -60,3 +60,20 @@ def test_marketing_sessions_use_the_persistent_data_volume() -> None:
     assert "MARKETING_DATA_DIR: /var/lib/teleautomation-marketing" in COMPOSE
     assert "TELEGRAM_SESSION_DIR: /var/lib/teleautomation-marketing" in COMPOSE
     assert "marketing_data:/var/lib/teleautomation-marketing" in COMPOSE
+
+
+def test_operations_image_comes_from_the_release_file_or_the_legacy_name() -> None:
+    """CI deploys name a digest-pinned image in the host release file. Without
+    that file the default is the name the host build has always produced, so
+    scripts/fix_and_deploy.sh keeps working unchanged."""
+    assert "image: ${OPERATIONS_IMAGE:-teleautomation-production-operations-api}" in COMPOSE
+    assert COMPOSE.count("${OPERATIONS_IMAGE") == 1
+
+
+def test_operations_api_is_seen_healthy_seconds_after_a_restart() -> None:
+    block = COMPOSE[COMPOSE.index("  operations-api:"):COMPOSE.index("\nvolumes:")]
+    assert "start_period: 90s" in block
+    assert "start_interval: 2s" in block
+    # The steady-state probe is unchanged.
+    assert "interval: 15s" in block and "retries: 10" in block
+
