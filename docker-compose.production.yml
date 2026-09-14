@@ -19,13 +19,6 @@
 
 name: teleautomation-production
 
-# Operations is an independently reviewed release. Pinning its build argument
-# here prevents an environment typo from labelling a different checkout as the
-# approved production release. The source checkout must still be verified at
-# this exact commit before any build.
-x-release-shas:
-  operations: &operations-release 7b9f184b9f7f33231630d933e315d6caa4727dd0
-
 x-capped-logs: &capped
   driver: json-file
   options: { max-size: "50m", max-file: "5" }
@@ -79,7 +72,7 @@ services:
     build:
       context: ../teleautomation-business
       args:
-        RELEASE_SHA: *operations-release
+        RELEASE_SHA: ${OPERATIONS_BUILD_SHA:-unset}
         VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
         VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
     environment:
@@ -179,15 +172,17 @@ services:
     logging: *capped
 
   operations-api:
-    # CI deploys pin the image by digest in /etc/teleautomation/operations-release.env
-    # (see deploy/production/teleautomation-deploy). Without that file this is
-    # the name the service has always had, so the host build in
-    # scripts/fix_and_deploy.sh behaves exactly as before.
+    # Releases pin the image in /etc/teleautomation/operations-release.env, which
+    # only deploy/production/teleautomation-deploy writes: a registry digest for
+    # a CI release, or release-<sha> for a break-glass host build. Without that
+    # file this is the name a host build produces. The build below runs only in
+    # scripts/fix_and_deploy.sh, which stamps it with OPERATIONS_BUILD_SHA; an
+    # unstamped host build reports "unset" on /version and fails verification.
     image: ${OPERATIONS_IMAGE:-teleautomation-production-operations-api}
     build:
       context: ../teleautomation-business
       args:
-        RELEASE_SHA: *operations-release
+        RELEASE_SHA: ${OPERATIONS_BUILD_SHA:-unset}
         VITE_OPERATIONS_PUBLIC_URL: https://operations.teleautomation.online
         VITE_MARKETING_PUBLIC_URL: https://marketing.teleautomation.online
     restart: unless-stopped

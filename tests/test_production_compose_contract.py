@@ -5,12 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
-# Bumped with the Compose anchor, deliberately in lockstep: the pin exists so
-# an environment typo cannot label a different checkout as the approved
-# release, and a test that tracked the file automatically would guard
-# nothing. f952a08 adds the Gmail Pub/Sub push exemption
-# (teleautomation-business#25).
-OPERATIONS_RELEASE = "7b9f184b9f7f33231630d933e315d6caa4727dd0"
 
 
 def test_production_compose_is_the_unified_stack() -> None:
@@ -26,9 +20,16 @@ def test_production_compose_is_the_unified_stack() -> None:
         assert f"  {service}:" in COMPOSE
 
 
-def test_operations_release_is_pinned_for_both_images() -> None:
-    assert f"operations: &operations-release {OPERATIONS_RELEASE}" in COMPOSE
-    assert COMPOSE.count("RELEASE_SHA: *operations-release") == 2
+def test_operations_releases_are_not_pinned_in_this_file() -> None:
+    """Merging to Operations main releases production; the released image is
+    recorded on the host by teleautomation-deploy. A commit written here would
+    be one nobody updates."""
+    assert "&operations-release" not in COMPOSE
+    assert "x-release-shas" not in COMPOSE
+
+
+def test_a_host_build_is_stamped_only_by_the_break_glass_commit() -> None:
+    assert COMPOSE.count("RELEASE_SHA: ${OPERATIONS_BUILD_SHA:-unset}") == 2
 
 
 def test_operations_calls_marketing_by_private_service_name() -> None:

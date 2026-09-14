@@ -10,11 +10,11 @@ Carry on through the whole pipeline without being asked and without pausing for
 approval between stages:
 
 ```
-change → tests → Operations PR → CI → merge → pin PR → CI → merge → sync → build → deploy → verify
+change → tests → PR → CI → merge → image → deploy → verify
 ```
 
-Do not stop at code, tests, PR, CI, merge, pin, or build. Those are steps, not
-destinations. A reply that ends at "the PR is open" or "CI is running" is an
+Do not stop at code, tests, PR, CI, merge, or a green build. Those are steps,
+not destinations. A reply that ends at "the PR is open" or "CI is running" is an
 unfinished task, and so is one that ends at a green deploy without checking the
 requested behaviour on the live site.
 
@@ -40,65 +40,80 @@ Otherwise pause mid-pipeline only for:
 
 Being unsure whether a change is worth deploying is not one of these. Ship it.
 
-## How to deploy
+## How production is released
+
+**Merging to Operations `main` is a production release.** Operations builds its
+image once in CI and releases it through its own `.github/workflows/deploy.yml`:
+the host's `teleautomation-deploy` pulls exactly that digest, refuses it unless
+the image was built from the merged commit, restarts, verifies the running
+image, `/version`, health, every container and the public site, and restores the
+previous release on any failure. There is no pin, release PR or deploy command
+in this repository. Follow the Operations `deploy` run to green, then verify the
+change on the live site.
+
+What this repository owns for production:
+
+- `docker-compose.production.yml` — the stack. `operations-api` runs the image
+  named in the host's `/etc/teleautomation/operations-release.env`, which only
+  `teleautomation-deploy` writes.
+- `deploy/production/teleautomation-deploy` — the only command the CI deploy key
+  can run: `verify`, `deploy`, `deploy-local`, `rollback`, `status`, `init`.
+- `scripts/setup_ci_deploy.sh` — the one-time keys, server account and GitHub
+  security settings. It creates credentials and security configuration, so a
+  person runs it; `--check` reports the state of every item.
+- `scripts/fix_and_deploy.sh` — break-glass only, below.
+
+Merging a change to these files does not change the host. The host's checkout of
+this repository moves only when the break-glass `sync` runs or root pulls it
+deliberately, and a changed `teleautomation-deploy` is installed only by
+re-running `scripts/setup_ci_deploy.sh` (it replaces both keys). On the host, run
+compose through `teleautomation-compose`, which always passes the release file;
+bare `docker compose` resolves the host-built image name and `up` would replace
+the verified release with it.
+
+## Break-glass: releasing without CI
+
+Only when GitHub Actions or the registry cannot release, and the release cannot
+wait:
 
 ```bash
-# from a branch: opens the Operations PR, merges it, then ships it
-OPERATIONS_BRANCH=fix/thing KVM1_SSH=user@host bash scripts/fix_and_deploy.sh
-
-# or from a commit already on Operations main
 OPERATIONS_SHA=<40-hex> KVM1_SSH=user@host bash scripts/fix_and_deploy.sh
 ```
 
-Stages, each idempotent and recorded so an interrupted run resumes rather than
-repeating work or double-merging:
+Stages, each recorded so an interrupted run resumes:
 
 ```
-ops_pr ops_ci ops_merge preflight pin pin_ci pin_merge sync build deploy verify
+preflight sync build release
 ```
 
-`--dry-run` prints the plan and changes nothing. `--restart` discards recorded
-progress.
-
-Given a branch, the script opens the Operations PR itself, with a description
-assembled from that branch's commits, polls its checks, merges it when green
-and carries straight on to the pin and the deploy. There is no manual gap.
-
-It stops on a **merge conflict** rather than guessing: resolving one means
-choosing which side of the change survives, and that is not a decision to
-automate.
-
-Re-running is safe, and not only because progress is recorded locally. Every
-mutating stage asks the *remote* whether its effect is already there — branch
-already merged, PR already open, anchor already moved, and production already
-serving the target commit — so the skips survive losing the local state file.
-
-`build` and `deploy` check production directly: the live `/version` must equal
-the target commit, `8000/tcp` must be bound to `127.0.0.1:8210`, and every
-container in the project must be healthy. All three, because a healthy
-container with no 8210 binding still serves 502 through nginx. If they hold,
-both stages skip and `verify` still runs; if any fails, the deploy proceeds
-normally.
+It releases only a commit already on Operations `main`, builds it on the host
+from a checkout verified to be that commit, stamps it with the commit, and hands
+it to `teleautomation-deploy deploy-local` — so the label check, verification
+and automatic rollback are the ones every CI release gets, and the recorded
+release stays true. `build` and `release` skip when production already serves
+the commit from its recorded release. `--dry-run` prints the plan; `--restart`
+discards recorded progress.
 
 This repository holds no environment specifics — hostnames and paths come from
-the environment (`KVM1_SSH`, `KVM1_SSH_KEY`, `PROD_ENV_FILE`), never from
-committed files. Keep it that way.
+the environment (`KVM1_SSH`, `KVM1_SSH_KEY`, `PROD_ENV_FILE`) or, for CI
+releases, from the Operations `production` environment, never from committed
+files. Keep it that way.
 
-## Invariants the pipeline protects
+## Invariants the release protects
 
-- **The release anchor and its contract test move in the same commit.**
-  `docker-compose.production.yml` carries `operations: &operations-release
-  <sha>` and `tests/test_production_compose_contract.py` asserts it. Changing
-  one without the other lets a build be pinned to a commit the test still
-  expects to be the previous one.
-- **The source checkout must equal the anchor before any build.** Building a
-  tree that is not what the anchor claims ships something no PR described.
-  `sync` refuses on mismatch.
-- **One deploy at a time.** `sync` refuses if a build or compose run is already
-  in flight on the host.
-- **Deploy with the project name and env file.** Omitting `-p` or
-  `--env-file` produces orphan containers and a service with no port binding,
-  which returns 502 while every container still reports healthy.
+- **An image runs only the commit it says it was built from.** Its revision
+  label and baked `RELEASE_SHA` must both equal the requested commit before
+  anything restarts.
+- **One release at a time.** The Operations `production-release` concurrency
+  group, a host lock, and a refusal while any `docker compose` or `docker build`
+  runs on the host.
+- **Every release is recorded and reversible.** The previous release is kept,
+  restored automatically on failure, and restorable with
+  `teleautomation-deploy rollback` or by releasing an older commit from the
+  Operations deploy workflow.
+- **Deploy with the project name and every env file.** Omitting `-p` or an
+  `--env-file` produces orphan containers, a service with no port binding, or
+  the wrong image — a 502 while every container still reports healthy.
 
 ## Verifying
 
