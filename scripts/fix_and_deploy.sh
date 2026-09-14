@@ -335,7 +335,8 @@ set -euo pipefail
 WANT="$1"; PROJECT="$2"; HEALTH="$3"
 GOT=$(curl -s -m 10 "$HEALTH/version" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p')
 [ "$GOT" = "$WANT" ] || exit 1
-docker port "${PROJECT}-operations-api-1" 8000/tcp 2>/dev/null | grep -q '127.0.0.1:8210' || exit 1
+PORTS=$(docker port "${PROJECT}-operations-api-1" 8000/tcp 2>/dev/null || true)
+grep -q '127.0.0.1:8210' <<<"$PORTS" || exit 1
 TOTAL=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Status}}' | wc -l)
 OK=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Status}}' | grep -c healthy)
 [ "$TOTAL" -gt 0 ] && [ "$OK" = "$TOTAL" ]
@@ -374,7 +375,8 @@ done
 GOT=$(curl -s -m 10 "$HEALTH/version" | sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p')
 [ "$GOT" = "$WANT" ] || { echo "  /version is $GOT, expected $WANT" >&2; exit 1; }
 echo "  /version  $(echo "$GOT" | cut -c1-7)"
-curl -s -m 10 "$HEALTH/health" | grep -q '"status":"ok"' || { echo "  health not ok" >&2; exit 1; }
+HEALTH_BODY=$(curl -s -m 10 "$HEALTH/health" || true)
+grep -q '"status":"ok"' <<<"$HEALTH_BODY" || { echo "  health not ok" >&2; exit 1; }
 echo "  health    ok"
 TOTAL=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Status}}' | wc -l)
 OK=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{.Status}}' | grep -c healthy)

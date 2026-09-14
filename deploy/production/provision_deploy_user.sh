@@ -32,8 +32,9 @@ IFS= read -r pubkey || true
   || die "stdin must be exactly one ssh-ed25519 public key line (the .pub file, never the private key)"
 
 # sshd must be willing to let the new user in at all.
-if sshd -T 2>/dev/null | grep -Eiq '^allowusers '; then
-  sshd -T | grep -Ei '^allowusers ' | grep -qw "$DEPLOY_USER" \
+sshd_config="$(sshd -T 2>/dev/null || true)"
+if grep -Eiq '^allowusers ' <<<"$sshd_config"; then
+  grep -Ei '^allowusers ' <<<"$sshd_config" | grep -w "$DEPLOY_USER" >/dev/null \
     || die "sshd AllowUsers does not include '$DEPLOY_USER'; add it deliberately before provisioning"
 fi
 

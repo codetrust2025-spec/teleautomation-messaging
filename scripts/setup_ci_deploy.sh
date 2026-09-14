@@ -60,18 +60,24 @@ gh auth status >/dev/null 2>&1 || die "gh is not logged in; run 'gh auth login' 
 
 # ── check ───────────────────────────────────────────────────────────────────
 report() {
-  local missing=0 line
+  local missing=0 line vars secrets env_vars env_secrets
+  # Captured first, then matched. `gh ... | grep -q` under pipefail fails
+  # whenever grep stops reading at its match before gh has finished writing:
+  # gh dies of SIGPIPE and the pipeline reports the item as missing.
+  vars="$(gh variable list --repo "$OPS" 2>/dev/null || true)"
+  secrets="$(gh secret list --repo "$OPS" 2>/dev/null || true)"
+  env_vars="$(gh variable list --env production --repo "$OPS" 2>/dev/null || true)"
+  env_secrets="$(gh secret list --env production --repo "$OPS" 2>/dev/null || true)"
   mark() { if [ "$1" = ok ]; then say "ok       $2"; else say "MISSING  $2"; missing=1; fi; }
 
-  if gh variable list --repo "$OPS" 2>/dev/null | grep -q '^OPERATIONS_PUBLIC_URL' \
-     && gh variable list --repo "$OPS" 2>/dev/null | grep -q '^MARKETING_PUBLIC_URL'; then
+  if grep -q '^OPERATIONS_PUBLIC_URL' <<<"$vars" && grep -q '^MARKETING_PUBLIC_URL' <<<"$vars"; then
     mark ok "public URL variables"
   else
     mark missing "public URL variables"
   fi
 
   line="$(gh api "repos/$MKT/keys" --jq ".[] | select(.title == \"$READ_KEY_TITLE\") | .read_only" 2>/dev/null | head -1 || true)"
-  if [ "$line" = true ] && gh secret list --repo "$OPS" 2>/dev/null | grep -q '^MARKETING_READ_DEPLOY_KEY'; then
+  if [ "$line" = true ] && grep -q '^MARKETING_READ_DEPLOY_KEY' <<<"$secrets"; then
     mark ok "read-only Marketing key and MARKETING_READ_DEPLOY_KEY"
   else
     mark missing "read-only Marketing key and MARKETING_READ_DEPLOY_KEY"
@@ -84,9 +90,9 @@ report() {
   line="$(gh api "repos/$OPS/environments/production" --jq '.deployment_branch_policy.protected_branches' 2>/dev/null || true)"
   if [ "$line" = true ]; then mark ok "production environment (protected branches only)"; else mark missing "production environment (protected branches only)"; fi
 
-  if gh secret list --env production --repo "$OPS" 2>/dev/null | grep -q '^PROD_DEPLOY_SSH_KEY' \
-     && gh variable list --env production --repo "$OPS" 2>/dev/null | grep -q '^PROD_DEPLOY_HOST' \
-     && gh variable list --env production --repo "$OPS" 2>/dev/null | grep -q '^PROD_KNOWN_HOSTS'; then
+  if grep -q '^PROD_DEPLOY_SSH_KEY' <<<"$env_secrets" \
+     && grep -q '^PROD_DEPLOY_HOST' <<<"$env_vars" \
+     && grep -q '^PROD_KNOWN_HOSTS' <<<"$env_vars"; then
     mark ok "production deploy key secret and host variables"
   else
     mark missing "production deploy key secret and host variables"
