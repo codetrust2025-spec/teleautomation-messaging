@@ -120,7 +120,8 @@ take_lock() {
   flock -n 9 || die "another deploy holds $LOCK_FILE"
   # The host-build path in scripts/fix_and_deploy.sh does not take this lock,
   # so check for its build and compose processes directly as well.
-  if ps -eo args | grep -E '^docker (compose|build)' | grep -v grep >/dev/null; then
+  procs="$(ps -eo args || true)"
+  if grep -E '^docker (compose|build)' <<<"$procs" | grep -v grep >/dev/null; then
     die "a docker compose or build process is already running on this host"
   fi
 }
@@ -170,7 +171,7 @@ inspect_image() {
 # Everything fix_and_deploy.sh verified, plus that the container is running the
 # exact image that was requested rather than merely reporting the right commit.
 verify_live() {
-  local want_sha="$1" want_image="$2" waited=0 status running got total healthy code
+  local want_sha="$1" want_image="$2" waited=0 status running got total healthy code body ports
   while :; do
     status="$(docker inspect "$CONTAINER" --format '{{ if .State.Health }}{{ .State.Health.Status }}{{ end }}' 2>/dev/null || true)"
     [ "$status" = healthy ] && break
@@ -187,10 +188,15 @@ verify_live() {
   [ "$got" = "$want_sha" ] || { echo "  /version is ${got:-none}, expected $want_sha" >&2; return 1; }
   say "/version  ${got:0:7}"
 
-  curl -s -m 10 "$HEALTH_URL/health" | grep -q '"status":"ok"' || { echo "  /health is not ok" >&2; return 1; }
+  # Captured, then matched: `curl | grep -q` under pipefail can fail on a
+  # healthy response when grep stops reading first, and a false failure here
+  # would roll back a good release.
+  body="$(curl -s -m 10 "$HEALTH_URL/health" || true)"
+  grep -q '"status":"ok"' <<<"$body" || { echo "  /health is not ok" >&2; return 1; }
   say "health    ok"
 
-  docker port "$CONTAINER" 8000/tcp 2>/dev/null | grep -q "127.0.0.1:${HEALTH_URL##*:}" \
+  ports="$(docker port "$CONTAINER" 8000/tcp 2>/dev/null || true)"
+  grep -q "127.0.0.1:${HEALTH_URL##*:}" <<<"$ports" \
     || { echo "  $CONTAINER lost its 127.0.0.1:${HEALTH_URL##*:} binding" >&2; return 1; }
 
   total="$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{ .Status }}' | wc -l | tr -d ' ')"
