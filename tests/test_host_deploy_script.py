@@ -109,7 +109,12 @@ state="$STUB_DIR/state"
 for a in "$@"; do
   case "$a" in
     */version) printf '{"service":"teleautomation-operations","sha":"%s"}' "$(cat "$state/served_sha" 2>/dev/null || printf '%s' "${STUB_SERVED_SHA:-}")"; exit 0 ;;
-    */health) printf '{"status":"ok"}'; exit 0 ;;
+    */health)
+      printf '{"status":"ok"}\n'
+      if [ -n "${STUB_FILLER:-}" ]; then
+        for _ in $(seq 1 20000); do printf 'padding padding padding padding\n' || exit 141; done
+      fi
+      exit 0 ;;
   esac
 done
 printf '%s' "${STUB_PUBLIC_CODE:-200}"
@@ -289,6 +294,15 @@ class TestDeploy:
         assert len(up) == 1
         assert ENV_FILES.search(up[0]), up[0]
         assert "up -d --no-deps --no-build --pull never operations-api" in up[0]
+        assert "is live" in result.stdout
+
+    def test_a_long_health_response_cannot_fail_a_healthy_release(self, host):
+        """A false /health failure would roll back a good release. `curl | grep -q`
+        under pipefail produces exactly that when grep closes the pipe early."""
+        host.record(host.release, OLD_IMAGE, OTHER_SHA)
+        host.serving(OTHER_SHA, OLD_IMAGE)
+        result = host.run("deploy", SHA, DIGEST, stdin=CREDENTIALS, STUB_FILLER="1")
+        assert result.returncode == 0, result.stderr
         assert "is live" in result.stdout
 
     def test_a_release_that_fails_verification_is_rolled_back_and_reported(self, host):

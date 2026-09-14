@@ -59,6 +59,9 @@ case "$1 $2" in
       *" --env production "*) printf 'PROD_DEPLOY_HOST\tx\nPROD_KNOWN_HOSTS\tx\n' ;;
       *) printf 'MARKETING_PUBLIC_URL\tx\nOPERATIONS_PUBLIC_URL\tx\n' ;;
     esac
+    if [ -n "${STUB_FILLER:-}" ]; then
+      for _ in $(seq 1 20000); do printf 'FILLER_VARIABLE\tx\n' || exit 141; done
+    fi
     exit 0 ;;
   "repo deploy-key")
     printf '%s\n' "$*" > "$STUB_DIR/deploy_key_add.args"
@@ -236,6 +239,13 @@ class TestApply:
 
 
 class TestCheck:
+    def test_a_long_listing_cannot_make_a_present_item_look_missing(self, pc):
+        """`gh ... | grep -q` under pipefail reports a present variable as
+        missing whenever grep closes the pipe before gh finishes writing."""
+        result = pc.run("--check", STUB_ALL_PRESENT="1", STUB_FILLER="1")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "MISSING" not in result.stdout
+
     def test_it_changes_nothing_and_reports_what_is_missing(self, pc):
         result = pc.run("--check")
         assert result.returncode != 0
