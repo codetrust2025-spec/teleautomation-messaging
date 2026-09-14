@@ -3,6 +3,7 @@
 #
 #   teleautomation-deploy verify   <sha> <digest>   pull and inspect only; nothing restarts
 #   teleautomation-deploy deploy   <sha> <digest>   pull, restart, verify; roll back on failure
+#   teleautomation-deploy deploy-local <sha>        the same, for an image built on this host (break-glass)
 #   teleautomation-deploy rollback                  restore the previous release
 #   teleautomation-deploy status                    what is recorded and what is serving
 #   teleautomation-deploy init                      record the running container as the release
@@ -54,7 +55,7 @@ PREVIOUS_FILE="$RELEASE_DIR/operations-release.previous.env"
 say() { printf '  %s\n' "$*"; }
 die() { printf 'FAILED: %s\n' "$*" >&2; exit 1; }
 usage() {
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -80,6 +81,11 @@ case "$VERB" in
     DIGEST="$3"
     [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "sha must be 40 lowercase hex characters"
     [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "digest must be sha256: followed by 64 lowercase hex characters"
+    ;;
+  deploy-local)
+    [ "$#" -eq 2 ] || usage
+    SHA="$2"
+    [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "sha must be 40 lowercase hex characters"
     ;;
   rollback|status|init)
     [ "$#" -eq 1 ] || usage
@@ -121,7 +127,7 @@ take_lock() {
 
 # ── registry ────────────────────────────────────────────────────────────────
 pull_and_inspect() {
-  local user token config revision baked
+  local user token config
   IFS= read -r user || true
   IFS= read -r token || true
   # A line typed or piped from Windows ends in CR; it is never part of either value.
@@ -146,11 +152,18 @@ pull_and_inspect() {
   docker --config "$config" logout "$REGISTRY" >/dev/null 2>&1 || true
   rm -rf "$config"
 
-  revision="$(docker image inspect "$REF" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
-  baked="$(docker image inspect "$REF" --format '{{ range .Config.Env }}{{ println . }}{{ end }}' | sed -n 's/^RELEASE_SHA=//p' | head -1)"
-  [ "$revision" = "$SHA" ] || die "image revision label is '${revision:-none}', expected $SHA"
-  [ "$baked" = "$SHA" ] || die "image RELEASE_SHA is '${baked:-none}', expected $SHA"
+  inspect_image "$REF" "$SHA"
   say "pulled ${REF#*@} and it was built from ${SHA:0:7}"
+}
+
+# Before anything restarts, the image must say it was built from the requested
+# commit in both places a build records it.
+inspect_image() {
+  local ref="$1" sha="$2" revision baked
+  revision="$(docker image inspect "$ref" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+  baked="$(docker image inspect "$ref" --format '{{ range .Config.Env }}{{ println . }}{{ end }}' | sed -n 's/^RELEASE_SHA=//p' | head -1)"
+  [ "$revision" = "$sha" ] || die "image revision label is '${revision:-none}', expected $sha"
+  [ "$baked" = "$sha" ] || die "image RELEASE_SHA is '${baked:-none}', expected $sha"
 }
 
 # ── verification ────────────────────────────────────────────────────────────
@@ -208,6 +221,44 @@ write_release() {
     "$image" "$sha" "$digest" > "$tmp"
   chmod 0644 "$tmp"
   mv -f "$tmp" "$target"
+}
+
+# Record the image as the release, restart onto it and verify it; on any
+# failure restore the previous release and verify that instead. Exits.
+release_image() {
+  local ref="$1" sha="$2" digest="$3" want_image current_image prev_image prev_sha
+  want_image="$(image_id "$ref")"
+
+  current_image="$(release_value "$RELEASE_FILE" OPERATIONS_IMAGE)"
+  if [ "$current_image" != "$ref" ]; then
+    # Re-deploying the same image must not overwrite the real previous
+    # release with itself.
+    cp -p "$RELEASE_FILE" "$PREVIOUS_FILE"
+  fi
+  write_release "$RELEASE_FILE" "$ref" "$sha" "$digest"
+
+  if restart_with && verify_live "$sha" "$want_image"; then
+    log_result live
+    say "${sha:0:7} is live"
+    exit 0
+  fi
+
+  echo "  ${sha:0:7} failed verification; restoring the previous release" >&2
+  prev_image="$(release_value "$PREVIOUS_FILE" OPERATIONS_IMAGE)"
+  prev_sha="$(release_value "$PREVIOUS_FILE" OPERATIONS_RELEASE_SHA)"
+  if [ "$prev_image" = "$ref" ] || [ -z "$(image_id "$prev_image")" ]; then
+    log_result "failed-no-rollback-target"
+    die "no usable previous release to restore; production needs attention"
+  fi
+  cp -p "$PREVIOUS_FILE" "$RELEASE_FILE"
+  if restart_with && verify_live "$prev_sha" "$(image_id "$prev_image")"; then
+    log_result "failed-rolled-back-to-${prev_sha:0:7}"
+    die "${sha:0:7} did not verify; rolled back to ${prev_sha:0:7}, which is live and verified"
+  fi
+  log_result "failed-rollback-failed"
+  printf 'FAILED: %s did not verify AND the rollback to %s did not verify either
+' "${sha:0:7}" "${prev_sha:0:7}" >&2
+  exit 3
 }
 
 require_initialised() {
@@ -277,37 +328,21 @@ case "$VERB" in
     take_lock
     require_initialised
     pull_and_inspect
-    want_image="$(image_id "$REF")"
+    release_image "$REF" "$SHA" "$DIGEST"
+    ;;
 
-    current_image="$(release_value "$RELEASE_FILE" OPERATIONS_IMAGE)"
-    if [ "$current_image" != "$REF" ]; then
-      # Re-deploying the same image must not overwrite the real previous
-      # release with itself.
-      cp -p "$RELEASE_FILE" "$PREVIOUS_FILE"
-    fi
-    write_release "$RELEASE_FILE" "$REF" "$SHA" "$DIGEST"
-
-    if restart_with && verify_live "$SHA" "$want_image"; then
-      log_result live
-      say "${SHA:0:7} is live"
-      exit 0
-    fi
-
-    echo "  ${SHA:0:7} failed verification; restoring the previous release" >&2
-    prev_image="$(release_value "$PREVIOUS_FILE" OPERATIONS_IMAGE)"
-    prev_sha="$(release_value "$PREVIOUS_FILE" OPERATIONS_RELEASE_SHA)"
-    if [ "$prev_image" = "$REF" ] || [ -z "$(image_id "$prev_image")" ]; then
-      log_result "failed-no-rollback-target"
-      die "no usable previous release to restore; production needs attention"
-    fi
-    cp -p "$PREVIOUS_FILE" "$RELEASE_FILE"
-    if restart_with && verify_live "$prev_sha" "$(image_id "$prev_image")"; then
-      log_result "failed-rolled-back-to-${prev_sha:0:7}"
-      die "${SHA:0:7} did not verify; rolled back to ${prev_sha:0:7}, which is live and verified"
-    fi
-    log_result "failed-rollback-failed"
-    printf 'FAILED: %s did not verify AND the rollback to %s did not verify either\n' "${SHA:0:7}" "${prev_sha:0:7}" >&2
-    exit 3
+  deploy-local)
+    # The break-glass path: scripts/fix_and_deploy.sh builds the image on this
+    # host when the registry pipeline cannot, tags it release-<sha>, and hands
+    # it here, so the release file, the verification and the rollback are the
+    # same whichever way the image arrived.
+    take_lock
+    require_initialised
+    LOCAL_REF="$LOCAL_IMAGE:release-$SHA"
+    [ -n "$(image_id "$LOCAL_REF")" ] || die "there is no host-built image $LOCAL_REF"
+    inspect_image "$LOCAL_REF" "$SHA"
+    say "$LOCAL_REF was built from ${SHA:0:7}"
+    release_image "$LOCAL_REF" "$SHA" ""
     ;;
 
   rollback)
