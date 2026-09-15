@@ -272,9 +272,11 @@ run_pin() {
 
 run_pin_ci() {
   if [ "$(current_anchor)" = "$OPERATIONS_SHA" ]; then say "already pinned"; return 0; fi
-  # Which lane the pin takes is decided in CI, not here: a pin of a
-  # frontend-only Operations range runs the compose and contract checks, and
-  # anything else runs the full pipeline including dual-service.
+  # Which lane the pin takes is decided in CI (scripts/ci_classify.sh), not
+  # here: a pin of a frontend-only Operations range runs the compose and
+  # contract checks, any other range adds dual-service, and Marketing's own
+  # suite is skipped because a pin leaves every Marketing input unchanged. The
+  # watch below still fails on any failing or missing check.
   say "polling pin checks"
   await_checks "pin PR $(pin_branch)" gh pr checks "$(pin_branch)"
   gh pr checks "$(pin_branch)" --watch --interval 20 >/dev/null \

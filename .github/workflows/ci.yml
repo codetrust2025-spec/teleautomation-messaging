@@ -2,8 +2,10 @@ name: ci
 
 # `on: [push, pull_request]` ran this workflow twice for every branch with a PR
 # open: once for the push, once for the pull_request, executing both jobs both
-# times. Restricting push to main keeps the post-merge run -- the safety net the
-# pin lane below depends on -- and drops only the duplicate.
+# times. Restricting push to main keeps the post-merge run -- every commit that
+# lands is classified and checked -- and drops only the duplicate. A pin whose
+# pull request already passed with the same tree gets the pin checks there; a
+# pin merged without passing gets the checks its Operations range needs.
 on:
   push:
     branches: [main]
@@ -20,20 +22,35 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # A release pin changes two files by one line each: the anchor in
-  # docker-compose.production.yml and the same SHA in the contract test. Nothing
-  # else in Marketing changes, so Marketing's suite, dashboard, image build and
-  # container checks would run against identical inputs.
+  # Lanes. Marketing CI runs on every Marketing pull request and on every push
+  # to main, and most of those are release pins written by fix_and_deploy.sh:
+  # two files, one line each. Which checks a run needs is decided by
+  # scripts/ci_classify.sh (tested in tests/test_ci_classify.py):
   #
-  # Deciding the pin lane takes two answers, and both must be yes:
-  #   1. is this Marketing change nothing but a pin?   scripts/pin_lane.sh
-  #   2. is the Operations range it pins frontend-only? the Operations repo's
-  #      own scripts/ci_lane.sh, fetched at the commit being pinned, so the rule
-  #      that applies is the one that shipped with that commit
-  # Anything unresolved -- no peer token, a failed compare, an unreadable
-  # anchor -- is `full`.
-  classify:
+  #   full      Marketing itself changed -> verify and dual-service
+  #   pin-dual  a pin of an Operations range that is not frontend-only
+  #             -> dual-service; verify would re-run identical Marketing inputs
+  #   pin       a pin of a frontend-only Operations range, or the push to main
+  #             of a pin that already passed on its pull request with the same
+  #             tree -> the compose and release-contract checks below only
+  #
+  # Anything the classifier cannot establish takes the lane that checks more.
+  #
+  # Every job here bills at least a whole minute, which is why classification
+  # and the pin checks share this one job instead of three: a separate
+  # classifier and a separate summary gate cost two billed minutes per run for
+  # a few seconds of work. The gate's duties stay here -- this job always runs
+  # and fails on a lane it does not recognise -- and each heavy job reports
+  # its own check, so `gh pr checks --watch` in fix_and_deploy.sh still fails
+  # on any failure, and a lane's skipped jobs still register as checks.
+  # tests/test_ci_workflow_lanes.py pins this shape.
+  ci:
     runs-on: ubuntu-latest
+    # checks: read lets a push to main see whether the pin it merged already
+    # passed on its pull request; nothing here writes.
+    permissions:
+      contents: read
+      checks: read
     outputs:
       lane: ${{ steps.pick.outputs.lane }}
     steps:
@@ -41,82 +58,35 @@ jobs:
         with: {fetch-depth: 0}
       - id: pick
         env:
-          PEER_TOKEN: ${{ secrets.PEER_REPO_TOKEN }}
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          REPO: ${{ github.repository }}
+          REPO_TOKEN: ${{ github.token }}
           PEER: codetrust2025-spec/teleautomation-business
+          PEER_TOKEN: ${{ secrets.PEER_REPO_TOKEN }}
+        run: bash scripts/ci_classify.sh
+      - name: The lane is one this workflow knows
+        env:
+          LANE: ${{ steps.pick.outputs.lane }}
         run: |
-          set -uo pipefail
-          decide() { echo "lane=$1" >> "$GITHUB_OUTPUT"; echo "::notice::lane=$1 ($2)"; exit 0; }
+          case "$LANE" in
+            pin|pin-dual|full) echo "lane $LANE" ;;
+            *) echo "::error::unknown lane '$LANE'"; exit 1 ;;
+          esac
 
-          # A push to main always runs everything. The pin lane is a pre-merge
-          # gate only, so every commit that lands still gets the full pipeline.
-          [ "$EVENT" = "pull_request" ] || decide full "event is $EVENT"
-
-          # From git rather than the API. `gh api .../pulls/N/files` needs
-          # `pull-requests: read`, and the default token was refused it here:
-          # the first pin to reach this classifier logged 403, saw an empty file
-          # list, and fell back to the full lane. Correct, but it would have
-          # done that forever. The diff against the base needs only the checkout
-          # above, which already fetches full history for it.
-          FILES=$(git diff --name-only "$BASE...HEAD") || FILES=""
-          echo "changed files:"; printf '%s\n' "$FILES" | sed 's/^/  /'
-          SHAPE=$(printf '%s\n' "$FILES" | bash scripts/pin_lane.sh)
-          [ "$SHAPE" = pin ] || decide full "Marketing change is not a pin"
-
-          # The anchors on either side of this PR.
-          anchor() { sed -n 's/.*operations: &operations-release \([0-9a-f]\{40\}\).*/\1/p' "$1" | head -1; }
-          NEW=$(anchor docker-compose.production.yml)
-          git show "$BASE:docker-compose.production.yml" > /tmp/base-compose.yml 2>/dev/null || true
-          OLD=$(anchor /tmp/base-compose.yml)
-          echo "anchor $OLD -> $NEW"
-          [ -n "$OLD" ] && [ -n "$NEW" ] || decide full "could not read both anchors"
-          [ "$OLD" != "$NEW" ] || decide full "anchor did not move"
-
-          [ -n "$PEER_TOKEN" ] || decide full "no peer token, cannot inspect the Operations range"
-
-          # What the pinned Operations range actually changed, and the lane rule
-          # as it exists at the new commit.
-          export GH_TOKEN="$PEER_TOKEN"
-          OPS_FILES=$(gh api "repos/$PEER/compare/$OLD...$NEW" --jq '.files[].filename') \
-            || decide full "could not compare the Operations range"
-          [ -n "$OPS_FILES" ] || decide full "Operations compare returned no files"
-          echo "operations files in $OLD..$NEW:"; printf '%s\n' "$OPS_FILES" | sed 's/^/  /'
-          gh api "repos/$PEER/contents/scripts/ci_lane.sh?ref=$NEW" --jq '.content' \
-            | base64 -d > /tmp/ci_lane.sh || decide full "could not fetch the Operations lane rule"
-          [ -s /tmp/ci_lane.sh ] || decide full "Operations lane rule was empty"
-          OPS_LANE=$(printf '%s\n' "$OPS_FILES" | bash /tmp/ci_lane.sh)
-          [ "$OPS_LANE" = frontend ] || decide full "Operations range is $OPS_LANE"
-
-          decide pin "pin of a frontend-only Operations range"
-
-  # Pin lane. Runs the two checks a pin can actually break, and nothing else.
-  #
-  #   - `docker compose -f docker-compose.production.yml config --quiet` proves
-  #     the production stack still resolves with the new anchor.
-  #   - the contract test asserts the anchor is present, appears for both
-  #     images, and matches the SHA the test itself records.
-  #
-  # What is skipped, and why it cannot be affected by this change:
-  #   - Marketing's Python suite, dashboard suite, image build, health,
-  #     migration and persistence checks: no Marketing source changed.
-  #   - dual-service: it exercises the cross-service HTTP contracts, which are
-  #     implemented in Operations Python. This lane is only chosen when the
-  #     pinned Operations range touched dashboard source alone.
-  #   - the staging stack and the backup/restore/rollback rehearsal: they run
-  #     against docker-compose.staging.yml with RELEASE_SHA_OPERATIONS pinned to
-  #     the literal `peer-under-test`. They never read the production anchor, so
-  #     a pin cannot change their outcome.
-  pin:
-    needs: classify
-    if: needs.classify.outputs.lane == 'pin'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # The two checks a pin can actually break, on both pin lanes:
+      #   - the production stack still resolves with the new anchor;
+      #   - the contract test asserts the anchor is present, appears for both
+      #     images, and matches the SHA the test itself records.
+      # On the full lane verify runs both, among everything else.
+      - if: steps.pick.outputs.lane != 'full'
+        uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: pip install pytest
+      - if: steps.pick.outputs.lane != 'full'
+        run: pip install pytest
       - name: Validate authoritative production Compose
+        if: steps.pick.outputs.lane != 'full'
         env:
           RELEASE_SHA_MARKETING: marketing-candidate-under-test
           MARKETING_DB_USER: marketing_validation
@@ -151,11 +121,12 @@ jobs:
           COMPANY_PAYMENT_RECEIVER_NAMES: Validation Receiver
         run: docker compose -f docker-compose.production.yml config --quiet
       - name: Release contract
+        if: steps.pick.outputs.lane != 'full'
         run: python -m pytest -q tests/test_production_compose_contract.py tests/test_pin_lane_selection.py
 
   verify:
-    needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    needs: ci
+    if: needs.ci.outputs.lane == 'full'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -250,8 +221,8 @@ jobs:
   # configured; otherwise it reports why it was skipped instead of silently
   # passing. See scripts/dual_service_test.sh for the checks performed.
   dual-service:
-    needs: classify
-    if: needs.classify.outputs.lane == 'full'
+    needs: ci
+    if: needs.ci.outputs.lane == 'full' || needs.ci.outputs.lane == 'pin-dual'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -308,45 +279,3 @@ jobs:
         if: steps.peer.outputs.available == 'true'
         working-directory: teleautomation-messaging
         run: bash scripts/ci_dual_service.sh
-
-  # One check that always runs and always reflects the whole workflow.
-  #
-  # Neither repository has branch protection -- private repositories on this
-  # plan cannot -- so nothing on GitHub's side requires a status before a merge.
-  # The only gate is `gh pr checks --watch` in fix_and_deploy.sh. A workflow
-  # whose every job can be skipped could therefore present nothing to fail on,
-  # so this job runs unconditionally and fails unless the lane that was actually
-  # selected succeeded.
-  ci:
-    needs: [classify, pin, verify, dual-service]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          LANE: ${{ needs.classify.outputs.lane }}
-          CLASSIFY: ${{ needs.classify.result }}
-          PIN: ${{ needs.pin.result }}
-          VERIFY: ${{ needs.verify.result }}
-          DUAL: ${{ needs.dual-service.result }}
-        run: |
-          set -eu
-          echo "lane=$LANE classify=$CLASSIFY pin=$PIN verify=$VERIFY dual-service=$DUAL"
-          if [ "$CLASSIFY" != success ]; then
-            echo "::error::classification failed"; exit 1
-          fi
-          case "$LANE" in
-            pin)
-              [ "$PIN" = success ] || { echo "::error::pin lane failed"; exit 1; }
-              [ "$VERIFY" = skipped ] || { echo "::error::verify should be skipped on the pin lane"; exit 1; }
-              [ "$DUAL" = skipped ] || { echo "::error::dual-service should be skipped on the pin lane"; exit 1; }
-              ;;
-            full)
-              [ "$VERIFY" = success ] || { echo "::error::verify failed"; exit 1; }
-              [ "$DUAL" = success ] || { echo "::error::dual-service failed"; exit 1; }
-              [ "$PIN" = skipped ] || { echo "::error::pin should be skipped on the full lane"; exit 1; }
-              ;;
-            *)
-              echo "::error::unknown lane '$LANE'"; exit 1
-              ;;
-          esac
-          echo "ci gate passed on the $LANE lane"
