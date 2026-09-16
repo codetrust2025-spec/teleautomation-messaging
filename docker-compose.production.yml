@@ -209,6 +209,10 @@ services:
       # trusted reverse proxy and fails closed when the approved office policy
       # is absent. Values live only in the protected host environment.
       OPERATIONS_OFFICE_NETWORK_CIDRS: ${OPERATIONS_OFFICE_NETWORK_CIDRS:-}
+      # The Drive folder holding signed offer letters. It used to be a literal
+      # in the dashboard source, which the public repository then published;
+      # unset here simply means the folder link is absent.
+      OFFER_LETTER_FOLDER_URL: ${OFFER_LETTER_FOLDER_URL:-}
       OPERATIONS_TRUSTED_PROXY_CIDRS: ${OPERATIONS_TRUSTED_PROXY_CIDRS:-}
       OPERATIONS_ATTENDANCE_EFFECTIVE_DATE: ${OPERATIONS_ATTENDANCE_EFFECTIVE_DATE:-}
 
