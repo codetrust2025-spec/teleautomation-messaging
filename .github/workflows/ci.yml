@@ -249,14 +249,27 @@ jobs:
       # Matching on the branch name rather than a hardcoded one means this needs
       # no edit per change, and it falls back on its own once a peer branch
       # merges and is deleted.
+      #
+      # A release pin is different: it is verified against exactly the
+      # Operations commit it pins. fix_and_deploy.sh opens the pin while the
+      # Operations pull request is still in CI, so the peer's default branch
+      # is then the previous release, and verifying against it would pass a
+      # pin without ever running the code it ships.
       - name: Resolve peer ref
         id: peerref
         if: steps.peer.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ secrets.PEER_REPO_TOKEN }}
           PEER_BRANCH: ${{ github.head_ref || github.ref_name }}
+          LANE: ${{ needs.ci.outputs.lane }}
         run: |
-          if [ -n "$PEER_BRANCH" ] \
+          if [ "$LANE" = pin-dual ]; then
+            ANCHOR=$(sed -n 's/.*operations: &operations-release \([0-9a-f]\{40\}\).*/\1/p' \
+              teleautomation-messaging/docker-compose.production.yml | head -1)
+            [ -n "$ANCHOR" ] || { echo "::error::pin-dual lane with no release anchor"; exit 1; }
+            echo "ref=$ANCHOR" >> "$GITHUB_OUTPUT"
+            echo "::notice::Verifying the pinned Operations commit $ANCHOR"
+          elif [ -n "$PEER_BRANCH" ] \
              && gh api "repos/codetrust2025-spec/teleautomation-business/branches/$PEER_BRANCH" >/dev/null 2>&1; then
             echo "ref=$PEER_BRANCH" >> "$GITHUB_OUTPUT"
             echo "::notice::Verifying against matching peer branch $PEER_BRANCH"
