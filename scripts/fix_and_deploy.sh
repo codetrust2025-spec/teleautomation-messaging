@@ -8,18 +8,26 @@
 # Operations main and the first three stages find nothing to do and fall
 # through to the deploy half.
 #
-#   ops_pr     open the Operations PR (description built from its commits)
-#   ops_ci     poll its checks to completion
-#   ops_merge  merge it, and record the resulting commit
+#   ops_pr     open the Operations PR (description built from its commits) and
+#              record its head: that commit is what ships
+#   pin        branch, move the release anchor + contract test, push, open PR --
+#              straight away, so both repositories' CI run at the same time
+#   ops_ci     poll the Operations checks to completion
+#   pin_ci     poll the pin PR's checks to completion
+#   ops_merge  land the Operations PR by fast-forwarding main to exactly the
+#              pinned commit; if main has moved, merge normally and re-pin
 #   preflight  confirm that commit is on Operations main; tools present
-#   pin        branch, move the release anchor + contract test, push, open PR
-#   pin_ci     poll the pin PR's checks
-#   pin_merge  merge the pin PR
+#   pin_merge  merge the pin PR, refusing unless the pin is on Operations main
 #   sync       on the host: no concurrent deploy, check out both repos, and
 #              verify the anchor equals the Operations HEAD
 #   build      build the operations-api image at that commit
 #   deploy     recreate the container
 #   verify     /version matches, health ok, all containers healthy, public 200
+#
+# Nothing merges until both CIs are green: a failure in either leaves both
+# pull requests open and production untouched. The pin names the Operations
+# PR's head and main is fast-forwarded to that same commit, so the commit CI
+# tested, the commit Marketing pins and the commit on main are one commit.
 #
 # Every stage is idempotent and records itself, so re-running after any
 # interruption resumes at the first incomplete stage. Nothing here creates a
@@ -40,10 +48,11 @@
 
 set -euo pipefail
 
-STAGES=(ops_pr ops_ci ops_merge preflight pin pin_ci pin_merge sync build deploy verify)
+STAGES=(ops_pr pin ops_ci pin_ci ops_merge preflight pin_merge sync build deploy verify)
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-OPS_REPO="${OPS_REPO:-$(cd "$HERE/../teleautomation-business" 2>/dev/null && pwd || true)}"
+OPS_REPO="${OPS_REPO:-$( { cd "$HERE/../teleautomation-business" 2>/dev/null \
+  || cd "$HERE/../teleautomation-operations" 2>/dev/null; } && pwd || true)}"
 COMPOSE_FILE="docker-compose.production.yml"
 CONTRACT_TEST="tests/test_production_compose_contract.py"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-teleautomation-production}"
@@ -72,7 +81,7 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "fix_and_deploy — plan only, nothing will be changed"
   echo
   echo "  operations branch: ${OPERATIONS_BRANCH:-<unset>}"
-  echo "  operations sha   : ${OPERATIONS_SHA:-<resolved by ops_merge>}"
+  echo "  operations sha   : ${OPERATIONS_SHA:-<the PR head, recorded by ops_pr>}"
   echo "  marketing repo   : $HERE"
   echo "  operations repo  : ${OPS_REPO:-<not found>}"
   echo "  ssh target       : ${KVM1_SSH:-<unset>}"
@@ -107,7 +116,18 @@ STATE_DIR="$HERE/.deploy-state"
 STATE="$STATE_DIR/$KEY.stages"
 SHA_FILE="$STATE_DIR/$KEY.sha"
 mkdir -p "$STATE_DIR"
-if [ "$RESTART" = "1" ]; then rm -f "$STATE" "$SHA_FILE"; fi
+PIN_FILE="$STATE_DIR/$KEY.pin"
+if [ "$RESTART" = "1" ]; then
+  # A restart pins afresh, so the pin PR the discarded run opened must not
+  # stay open beside the new one. It was never merged: closing it changes
+  # nothing in production.
+  if [ -s "$PIN_FILE" ] \
+     && [ "$(gh pr view "$(cat "$PIN_FILE")" --json state -q .state 2>/dev/null)" = OPEN ]; then
+    gh pr close "$(cat "$PIN_FILE")" --delete-branch \
+      --comment "Superseded: fix_and_deploy.sh was restarted." >/dev/null || true
+  fi
+  rm -f "$STATE" "$SHA_FILE" "$PIN_FILE"
+fi
 touch "$STATE"
 # A resumed run picks the commit back up rather than re-deriving it, so the
 # deploy half cannot drift onto a different commit than the one that was merged.
@@ -176,6 +196,7 @@ run_ops_pr() {
   fi
   if ops_gh pr view "$OPERATIONS_BRANCH" --json number >/dev/null 2>&1; then
     say "PR for $OPERATIONS_BRANCH already open — reusing it"
+    record_release_commit
     return 0
   fi
   # Description from the branch's own commits: they are written to explain the
@@ -191,6 +212,27 @@ run_ops_pr() {
 ---
 Opened by \`scripts/fix_and_deploy.sh\`. Body assembled from the commits on this branch." >/dev/null
   say "opened Operations PR for $OPERATIONS_BRANCH"
+  record_release_commit
+}
+
+# The release commit is the PR head, recorded once. The pin is written from it
+# before CI finishes, so it has to be the exact commit CI is testing, and it
+# must not follow the branch if the branch moves.
+record_release_commit() {
+  [ -n "$OPERATIONS_SHA" ] && return 0
+  OPERATIONS_SHA="$(git -C "$OPS_REPO" rev-parse "origin/$OPERATIONS_BRANCH")"
+  [ "${#OPERATIONS_SHA}" -eq 40 ] || die "could not resolve the head of $OPERATIONS_BRANCH"
+  printf '%s' "$OPERATIONS_SHA" > "$SHA_FILE"
+  say "release commit is the PR head ${OPERATIONS_SHA:0:7}"
+}
+
+# The branch must still be where it was pinned. A push after the pin would have
+# CI testing one commit while Marketing pins another.
+require_pinned_head() {
+  local head
+  head="$(ops_gh pr view "$OPERATIONS_BRANCH" --json headRefOid -q .headRefOid 2>/dev/null || true)"
+  [ "$head" = "$OPERATIONS_SHA" ] \
+    || die "$OPERATIONS_BRANCH moved to ${head:0:7} after ${OPERATIONS_SHA:0:7} was pinned — re-run with --restart"
 }
 
 # ── ops_ci ──────────────────────────────────────────────────────────────────
@@ -199,6 +241,7 @@ run_ops_ci() {
     say "nothing to poll"
     return 0
   fi
+  require_pinned_head
   say "polling Operations checks"
   await_checks "Operations PR $OPERATIONS_BRANCH" ops_gh pr checks "$OPERATIONS_BRANCH"
   ops_gh pr checks "$OPERATIONS_BRANCH" --watch --interval 20 >/dev/null \
@@ -207,6 +250,15 @@ run_ops_ci() {
 }
 
 # ── ops_merge ───────────────────────────────────────────────────────────────
+# Both CIs are green by the time this runs. Main is fast-forwarded to the pinned
+# commit: pushed as-is and never forced, so the push is refused unless main is
+# still an ancestor of it, and branch protection still requires its `ci` check.
+# GitHub records the pull request as merged once its head lands on main.
+#
+# When main has moved since the branch was cut a fast-forward is impossible. The
+# pull request is then merged with a merge commit, as before, and the pin is
+# moved to that commit: pinning the head instead would ship the branch without
+# whatever else had reached main, reverting it in production.
 run_ops_merge() {
   if [ -n "$OPERATIONS_BRANCH" ] && ! branch_is_merged; then
     local state
@@ -214,9 +266,29 @@ run_ops_merge() {
     # A conflicted branch needs a human: resolving it means choosing which side
     # of the change survives, which is not a decision to automate.
     [ "$state" = "DIRTY" ] && die "$OPERATIONS_BRANCH has a merge conflict — resolve it, then re-run"
-    ops_gh pr merge "$OPERATIONS_BRANCH" --merge --delete-branch >/dev/null \
-      || die "could not merge the Operations PR"
-    say "merged $OPERATIONS_BRANCH"
+    require_pinned_head
+    git -C "$OPS_REPO" fetch --quiet origin main
+    if git -C "$OPS_REPO" merge-base --is-ancestor origin/main "$OPERATIONS_SHA"; then
+      git -C "$OPS_REPO" push --quiet origin "$OPERATIONS_SHA:refs/heads/main" \
+        || die "Operations main refused the fast-forward to ${OPERATIONS_SHA:0:7}"
+      await_merged
+      git -C "$OPS_REPO" push --quiet origin --delete "$OPERATIONS_BRANCH" 2>/dev/null || true
+      say "fast-forwarded Operations main to ${OPERATIONS_SHA:0:7}; merged $OPERATIONS_BRANCH"
+    else
+      local stale_pin merged
+      stale_pin="$(pin_branch)"
+      ops_gh pr merge "$OPERATIONS_BRANCH" --merge --delete-branch >/dev/null \
+        || die "could not merge the Operations PR"
+      merged="$(ops_gh pr view "$OPERATIONS_BRANCH" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || true)"
+      [ "${#merged}" -eq 40 ] || die "could not determine the merge commit for $OPERATIONS_BRANCH"
+      OPERATIONS_SHA="$merged"
+      printf '%s' "$OPERATIONS_SHA" > "$SHA_FILE"
+      say "main had moved: merged $OPERATIONS_BRANCH as ${OPERATIONS_SHA:0:7}; re-pinning to it"
+      gh pr close "$stale_pin" --delete-branch \
+        --comment "Superseded by a pin of merge commit ${OPERATIONS_SHA:0:7}: main moved before the fast-forward." >/dev/null || true
+      run_pin
+      run_pin_ci
+    fi
   fi
   if [ -z "$OPERATIONS_SHA" ]; then
     OPERATIONS_SHA="$(ops_gh pr view "$OPERATIONS_BRANCH" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || true)"
@@ -224,6 +296,20 @@ run_ops_merge() {
     printf '%s' "$OPERATIONS_SHA" > "$SHA_FILE"
   fi
   say "Operations commit is ${OPERATIONS_SHA:0:7}"
+}
+
+# GitHub marks a pull request merged when its head reaches the base branch, a
+# few seconds after the push. The branch is deleted only after that, so the pull
+# request reads as merged rather than closed.
+await_merged() {
+  local waited=0 state
+  while :; do
+    state="$(ops_gh pr view "$OPERATIONS_BRANCH" --json state -q .state 2>/dev/null || echo UNKNOWN)"
+    [ "$state" = MERGED ] && return 0
+    [ "$waited" -ge 60 ] && die "main is at ${OPERATIONS_SHA:0:7} but GitHub has not marked the PR merged (state $state)"
+    sleep 3
+    waited=$((waited + 3))
+  done
 }
 
 # ── preflight ───────────────────────────────────────────────────────────────
@@ -267,6 +353,7 @@ run_pin() {
   gh pr create --base main --head "$(pin_branch)" \
     --title "pin Operations to ${OPERATIONS_SHA:0:7}" \
     --body "Moves the production release anchor to \`${OPERATIONS_SHA:0:7}\`. Anchor and contract test move in the same commit." >/dev/null
+  printf '%s' "$(pin_branch)" > "$PIN_FILE"
   say "opened pin PR"
 }
 
@@ -287,6 +374,11 @@ run_pin_ci() {
 run_pin_merge() {
   git -C "$HERE" fetch --quiet origin main
   if [ "$(current_anchor)" = "$OPERATIONS_SHA" ]; then say "anchor already on main"; return 0; fi
+  # The pin was opened before Operations merged. Whatever happened since, it
+  # may only land once its commit is on Operations main.
+  git -C "$OPS_REPO" fetch --quiet origin main
+  git -C "$OPS_REPO" merge-base --is-ancestor "$OPERATIONS_SHA" origin/main 2>/dev/null \
+    || die "refusing to merge the pin: ${OPERATIONS_SHA:0:7} is not on Operations main"
   gh pr merge "$(pin_branch)" --merge --delete-branch >/dev/null || die "could not merge the pin PR"
   git -C "$HERE" fetch --quiet origin main
   [ "$(current_anchor)" = "$OPERATIONS_SHA" ] \
@@ -398,11 +490,13 @@ for stage in "${STAGES[@]}"; do
     continue
   fi
   printf '\n== %s ==\n' "$stage"
+  stage_started=$SECONDS
   "run_$stage"
   mark_done "$stage"
+  say "($((SECONDS - stage_started))s)"
 done
 
 echo
-echo "DONE — ${OPERATIONS_SHA:0:7} is live and verified."
+echo "DONE — ${OPERATIONS_SHA:0:7} is live and verified. (${SECONDS}s)"
 echo "Live behaviour still needs checking in the browser: a green deploy proves"
 echo "the release is running, not that the change does what was asked."

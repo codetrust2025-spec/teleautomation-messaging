@@ -10,7 +10,7 @@ Carry on through the whole pipeline without being asked and without pausing for
 approval between stages:
 
 ```
-change → tests → Operations PR → CI → merge → pin PR → CI → merge → sync → build → deploy → verify
+change → tests → Operations PR + pin PR → both CIs → merge → pin merge → sync → build → deploy → verify
 ```
 
 Do not stop at code, tests, PR, CI, merge, pin, or build. Those are steps, not
@@ -54,15 +54,26 @@ Stages, each idempotent and recorded so an interrupted run resumes rather than
 repeating work or double-merging:
 
 ```
-ops_pr ops_ci ops_merge preflight pin pin_ci pin_merge sync build deploy verify
+ops_pr pin ops_ci pin_ci ops_merge preflight pin_merge sync build deploy verify
 ```
 
 `--dry-run` prints the plan and changes nothing. `--restart` discards recorded
 progress.
 
 Given a branch, the script opens the Operations PR itself, with a description
-assembled from that branch's commits, polls its checks, merges it when green
-and carries straight on to the pin and the deploy. There is no manual gap.
+assembled from that branch's commits, and opens the pin PR straight away, so
+Operations CI and Marketing CI run at the same time. It merges nothing until
+both are green, then fast-forwards Operations main to exactly the pinned
+commit -- the PR head that CI tested -- and carries straight on to the deploy.
+There is no manual gap.
+
+Three things keep the early pin safe. The pin names the PR head, and a branch
+that moves after it was pinned stops the run. The fast-forward is a plain push,
+never forced, so it is refused unless main is still an ancestor of the pinned
+commit; when main has moved, the PR is merged normally and the pin is moved to
+that merge commit before anything else happens. And the pin PR itself is never
+merged unless its commit is on Operations main. Marketing's `dual-service` check
+runs against the pinned commit, not whatever Operations main held at the time.
 
 It stops on a **merge conflict** rather than guessing: resolving one means
 choosing which side of the change survives, and that is not a decision to

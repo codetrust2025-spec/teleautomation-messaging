@@ -54,7 +54,10 @@ case "$path" in
   repos/*/compare/*)             answer "$STUB_COMPARE" "${STUB_COMPARE_EXIT:-0}" ;;
   repos/*/contents/scripts/ci_lane.sh*)
     [ "${STUB_RULE_EXIT:-0}" = 0 ] || exit "$STUB_RULE_EXIT"
-    base64 < "$STUB_RULE" | tr -d '\n'; echo ;;
+    rule="$STUB_RULE"
+    # The rule as it exists at the old anchor, when a test gives it one.
+    case "$path" in *"ref=${STUB_OLD_REF:-none}") rule="${STUB_RULE_AT_OLD:-$STUB_RULE}" ;; esac
+    base64 < "$rule" | tr -d '\n'; echo ;;
   repos/*/commits/*/check-runs*) answer "$STUB_CHECKS" "${STUB_CHECKS_EXIT:-0}" ;;
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
 esac
@@ -102,7 +105,13 @@ class Repo:
         return self.git("rev-parse", "HEAD")
 
     def answer(self, *, compare: str | None = None, rule: str | None = None,
-               checks: str | None = None, **exits: int) -> None:
+               checks: str | None = None, rule_at_old: str | None = None,
+               **exits: int) -> None:
+        if rule_at_old is not None:
+            at_old = self.files["rule"].with_name("stub-rule-at-old")
+            at_old.write_text(rule_at_old, encoding="utf-8", newline="\n")
+            self.stub_env["STUB_RULE_AT_OLD"] = str(at_old)
+            self.stub_env["STUB_OLD_REF"] = OLD
         for key, value in (("compare", compare), ("rule", rule), ("checks", checks)):
             if value is not None:
                 self.files[key].write_text(value, encoding="utf-8", newline="\n")
@@ -326,3 +335,35 @@ class TestEverythingElse:
 
         decided = set(re.findall(r"decide (pin-dual|pin|full)\b", SCRIPT.read_text(encoding="utf-8")))
         assert decided == {"pin", "pin-dual", "full"}
+
+
+class TestTheRuleCannotJudgeItself:
+    """A pin is fast-laned only on the rule production already runs.
+
+    The rule used to be read at the new anchor alone, so the change under
+    review decided how much of it got checked: a commit that loosened
+    scripts/ci_lane.sh would have been judged by the loosened rule.
+    """
+
+    def test_both_the_deployed_and_the_pinned_rule_are_asked(self, repo: Repo) -> None:
+        base, _ = repo.pin_branch()
+        repo.answer(rule=FRONTEND_RULE)
+        assert repo.classify(EVENT="pull_request", BASE=base)[0] == "pin"
+        calls = "\n".join(repo.calls())
+        assert f"ref={OLD}" in calls and f"ref={NEW}" in calls
+
+    def test_the_new_rule_alone_cannot_grant_the_fast_lane(self, repo: Repo) -> None:
+        base, _ = repo.pin_branch()
+        repo.answer(rule=FRONTEND_RULE, rule_at_old=BACKEND_RULE)
+        lane, out = repo.classify(EVENT="pull_request", BASE=base)
+        assert lane == "pin-dual"
+        assert f"under the rule at {OLD[:7]}" in out
+
+    def test_a_range_that_edits_the_rule_is_never_fast_laned(self, repo: Repo) -> None:
+        base, _ = repo.pin_branch()
+        repo.answer(compare="dashboard/src/App.css\nscripts/ci_lane.sh\n", rule=FRONTEND_RULE)
+        lane, out = repo.classify(EVENT="pull_request", BASE=base)
+        assert lane == "pin-dual"
+        assert "changes the lane rule itself" in out
+        # Decided before either version of the rule is consulted.
+        assert not any("contents/scripts/ci_lane.sh" in call for call in repo.calls())

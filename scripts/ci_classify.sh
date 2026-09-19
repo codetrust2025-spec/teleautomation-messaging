@@ -9,7 +9,9 @@
 #   pin-dual  A release pin of an Operations range that is not frontend-only.
 #             Marketing is unchanged, so verify would re-run identical inputs;
 #             the cross-service checks still run against the new Operations.
-#   pin       A release pin of a frontend-only Operations range, or the push of
+#   pin       A release pin of an Operations range that both the lane rule in
+#             production and the lane rule being pinned call frontend-only,
+#             and that does not change the rule itself; or the push of
 #             a pin that already passed on its pull request with the same tree:
 #             the compose and release-contract checks only.
 #
@@ -67,19 +69,30 @@ require_pin() {
 }
 
 # The lane a pin of OLD..NEW needs, from what that Operations range changed and
-# the lane rule as it exists at NEW (Operations' own scripts/ci_lane.sh).
+# Operations' own lane rule, scripts/ci_lane.sh.
+#
+# The rule is read at both ends of the range and both must say frontend. Asking
+# only NEW let the change under review decide how much of it was checked: a
+# commit loosening the rule would have been judged by the loosened rule. OLD is
+# the rule already in production, so it is the one a change cannot write. A
+# range that edits the rule is never fast-laned at all.
 range_lane() {
-  local files rule ops
+  local files rule ops at
   [ -n "${PEER_TOKEN:-}" ] || decide pin-dual "no peer token, cannot inspect the Operations range"
   files=$(GH_TOKEN="$PEER_TOKEN" gh api "repos/$PEER/compare/$OLD...$NEW" --jq '.files[].filename') \
     || decide pin-dual "could not compare the Operations range"
   [ -n "$files" ] || decide pin-dual "Operations compare returned no files"
   echo "operations files in ${OLD:0:7}..${NEW:0:7}:"; printf '%s\n' "$files" | sed 's/^/  /'
-  rule=$(GH_TOKEN="$PEER_TOKEN" gh api "repos/$PEER/contents/scripts/ci_lane.sh?ref=$NEW" --jq '.content' \
-    | base64 -d) || decide pin-dual "could not fetch the Operations lane rule"
-  [ -n "$rule" ] || decide pin-dual "Operations lane rule was empty"
-  ops=$(printf '%s\n' "$files" | bash -c "$rule")
-  [ "$ops" = frontend ] || decide pin-dual "Operations range is ${ops:-unclassified}"
+  if printf '%s\n' "$files" | tr -d '\r' | grep -qxF 'scripts/ci_lane.sh'; then
+    decide pin-dual "Operations range changes the lane rule itself"
+  fi
+  for at in "$OLD" "$NEW"; do
+    rule=$(GH_TOKEN="$PEER_TOKEN" gh api "repos/$PEER/contents/scripts/ci_lane.sh?ref=$at" --jq '.content' \
+      | base64 -d) || decide pin-dual "could not fetch the Operations lane rule at ${at:0:7}"
+    [ -n "$rule" ] || decide pin-dual "Operations lane rule at ${at:0:7} was empty"
+    ops=$(printf '%s\n' "$files" | bash -c "$rule")
+    [ "$ops" = frontend ] || decide pin-dual "Operations range is ${ops:-unclassified} under the rule at ${at:0:7}"
+  done
   decide pin "pin of a frontend-only Operations range"
 }
 

@@ -99,3 +99,23 @@ def test_only_the_classifier_may_read_check_runs_and_nothing_writes() -> None:
     assert WORKFLOW["permissions"] == {"contents": "read"}
     assert JOBS["ci"]["permissions"] == {"contents": "read", "checks": "read"}
     assert "permissions" not in JOBS["verify"] and "permissions" not in JOBS["dual-service"]
+
+
+def test_a_pin_is_verified_against_the_commit_it_pins() -> None:
+    """fix_and_deploy.sh opens the pin while Operations CI is still running, so
+    the peer's default branch is the previous release at that point. On the
+    pin-dual lane dual-service must check out the anchor itself, or it would
+    pass a pin without ever running the code it ships."""
+    steps = WORKFLOW["jobs"]["dual-service"]["steps"]
+    resolve = next(step for step in steps if step.get("name") == "Resolve peer ref")
+    assert resolve["env"]["LANE"] == "${{ needs.ci.outputs.lane }}"
+    script = resolve["run"]
+    assert '[ "$LANE" = pin-dual ]' in script
+    assert "operations: &operations-release" in script
+    assert 'echo "ref=$ANCHOR" >> "$GITHUB_OUTPUT"' in script
+    # For a pin the anchor wins over any same-named peer branch.
+    assert script.index('"$LANE" = pin-dual') < script.index('"$PEER_BRANCH"')
+    # And the Operations checkout uses what this step resolved.
+    checkout = next(step for step in steps
+                    if step.get("with", {}).get("path") == "teleautomation-business")
+    assert checkout["with"]["ref"] == "${{ steps.peerref.outputs.ref }}"

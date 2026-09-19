@@ -31,9 +31,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "fix_and_deploy.sh"
 INSTRUCTIONS = ROOT / "CLAUDE.md"
 
+# The pin opens straight after the Operations PR, so the two repositories'
+# CI run side by side; nothing merges until both have passed.
 STAGES = [
-    "ops_pr", "ops_ci", "ops_merge",
-    "preflight", "pin", "pin_ci", "pin_merge",
+    "ops_pr", "pin", "ops_ci", "pin_ci",
+    "ops_merge", "preflight", "pin_merge",
     "sync", "build", "deploy", "verify",
 ]
 
