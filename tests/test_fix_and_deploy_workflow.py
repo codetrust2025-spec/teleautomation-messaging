@@ -304,3 +304,86 @@ def test_a_merge_conflict_stops_rather_than_guessing():
     assert "mergeStateStatus" in body
     assert "DIRTY" in body
     assert "merge conflict" in body
+
+
+# ── Every release goes through the host's deploy tool ──────────────────────
+#
+# On 21 Sep the host served 84c8f29 while its release record still named
+# 21e0569: the registry path had released once on 17 Sep, and every deploy after
+# that recreated the container with a raw `docker compose up` that never told
+# the record. The root compose wrapper, `teleautomation-deploy rollback` and the
+# automatic restore after a failed release all act on that record, so any of
+# them would have put four-day-old code back live.
+
+def _block(name: str) -> str:
+    return script().split(f"{name}() {{", 1)[1].split("\n}\n", 1)[0]
+
+
+def test_the_deploy_stage_never_starts_the_container_itself():
+    block = _block("run_deploy")
+    assert "docker compose" not in block and "up -d" not in block, (
+        "run_deploy recreates the container behind the release record's back"
+    )
+    assert '"$HOST_DEPLOY_TOOL deploy-local' in block
+    assert "release_through_registry" in block
+
+
+def test_the_registry_is_the_default_and_the_host_build_is_the_exception():
+    body = script()
+    assert 'DEPLOY_VIA="${DEPLOY_VIA:-registry}"' in body
+    assert "registry|host) ;;" in body
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
+def test_an_unknown_deploy_path_is_refused_with_the_other_arguments():
+    result = _run(OPERATIONS_SHA="a" * 40, DEPLOY_VIA="sideways")
+    assert result.returncode != 0
+    assert "DEPLOY_VIA must be registry or host" in result.stderr
+    assert "KVM1_SSH" not in result.stderr, "the path is an argument; check it first"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash unavailable")
+def test_the_plan_names_the_deploy_path():
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--dry-run"], capture_output=True, text=True, check=False,
+        env={**os.environ, "OPERATIONS_SHA": "", "KVM1_SSH": "", "DEPLOY_VIA": "host"},
+        cwd=str(ROOT),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "deploy via       : host" in result.stdout
+
+
+def test_a_release_onto_a_stale_record_is_refused_first():
+    """A release that fails verification restores what the record calls
+    current, so a stale record turns a failed deploy into an old one."""
+    block = _block("run_deploy")
+    check = block.index("assert_release_record_is_current")
+    assert check < block.index("deploy-local") and check < block.index("release_through_registry")
+    assert '"$HOST_DEPLOY_TOOL status"' in _block("assert_release_record_is_current")
+
+
+def test_the_host_build_carries_the_name_deploy_local_checks():
+    assert "docker tag '$LOCAL_IMAGE' '$LOCAL_IMAGE:release-$OPERATIONS_SHA'" in _block("run_build")
+
+
+def test_the_registry_release_follows_the_run_to_its_deploy_job():
+    block = _block("release_through_registry")
+    assert "workflow run deploy.yml --ref main" in block
+    assert '-f sha="$OPERATIONS_SHA" -f action=deploy' in block
+    assert "--exit-status" in block, "a failed run must fail the stage"
+    assert 'select(.name == "deploy")' in block, (
+        "a run whose deploy job was skipped would otherwise count as a release"
+    )
+
+
+def test_a_resumed_run_follows_the_release_it_started():
+    body = script()
+    block = _block("release_through_registry")
+    assert '> "$DEPLOY_RUN_FILE"' in block and 'cat "$DEPLOY_RUN_FILE"' in block
+    assert "queued|in_progress" in block, "only an unfinished run may be followed"
+    assert '"$DEPLOY_RUN_FILE"' in body.split('if [ "$RESTART" = "1" ]; then', 1)[1].split("\nfi\n", 1)[0]
+
+
+def test_verify_requires_the_record_to_name_what_is_serving():
+    block = script().split("run_verify() {", 1)[1].split("\nREMOTE\n", 1)[0]
+    assert '"$TOOL" status' in block

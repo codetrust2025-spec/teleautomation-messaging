@@ -20,9 +20,13 @@
 #   pin_merge  merge the pin PR, refusing unless the pin is on Operations main
 #   sync       on the host: no concurrent deploy, check out both repos, and
 #              verify the anchor equals the Operations HEAD
-#   build      build the operations-api image at that commit
-#   deploy     recreate the container
-#   verify     /version matches, health ok, all containers healthy, public 200
+#   build      registry: nothing to build -- CI built this commit's image;
+#              host: build it on the host and tag it release-<sha>
+#   deploy     hand the release to the host's teleautomation-deploy, which
+#              records it, restarts onto it, verifies it and restores the
+#              previous release if it does not verify
+#   verify     /version matches, health ok, all containers healthy, public 200,
+#              and the host's release record names what is serving
 #
 # Nothing merges until both CIs are green: a failure in either leaves both
 # pull requests open and production untouched. The pin names the Operations
@@ -41,6 +45,10 @@
 #   KVM1_SSH_KEY    optional  identity file; omit to use your ssh config
 #   PROD_ENV_FILE   optional  host path to the compose env file
 #   COMPOSE_PROJECT optional  compose project name
+#   DEPLOY_VIA      optional  registry (default): release CI's image of the
+#                             commit by digest, through the Operations deploy
+#                             workflow. host: the break-glass path -- build on
+#                             the host and release it with deploy-local.
 #
 # Flags:
 #   --dry-run   print the plan and exit without touching anything
@@ -60,6 +68,11 @@ PROD_ENV_FILE="${PROD_ENV_FILE:-/etc/teleautomation-production.env}"
 SERVICE="operations-api"
 HEALTH_URL="http://127.0.0.1:8210"
 PUBLIC_URL="https://operations.teleautomation.online/"
+# The host's deploy tool, installed by deploy/production/provision_deploy_user.sh,
+# and the name the host build gives the image.
+HOST_DEPLOY_TOOL="/usr/local/sbin/teleautomation-deploy"
+LOCAL_IMAGE="teleautomation-production-operations-api"
+DEPLOY_VIA="${DEPLOY_VIA:-registry}"
 
 OPERATIONS_BRANCH="${OPERATIONS_BRANCH:-}"
 OPERATIONS_SHA="${OPERATIONS_SHA:-}"
@@ -86,6 +99,7 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "  operations repo  : ${OPS_REPO:-<not found>}"
   echo "  ssh target       : ${KVM1_SSH:-<unset>}"
   echo "  compose project  : $COMPOSE_PROJECT"
+  echo "  deploy via       : $DEPLOY_VIA"
   echo
   echo "  stages:"
   for s in "${STAGES[@]}"; do echo "    - $s"; done
@@ -106,6 +120,10 @@ if [ -n "$OPERATIONS_SHA" ]; then
     *[!0-9a-f]*) die "OPERATIONS_SHA must be a full 40-character hex commit" ;;
   esac
 fi
+case "$DEPLOY_VIA" in
+  registry|host) ;;
+  *) die "DEPLOY_VIA must be registry or host" ;;
+esac
 
 : "${KVM1_SSH:?set KVM1_SSH to user@host for the production host}"
 [ -n "$OPS_REPO" ] || die "Operations repo not found; check it out beside this one or set OPS_REPO"
@@ -117,6 +135,7 @@ STATE="$STATE_DIR/$KEY.stages"
 SHA_FILE="$STATE_DIR/$KEY.sha"
 mkdir -p "$STATE_DIR"
 PIN_FILE="$STATE_DIR/$KEY.pin"
+DEPLOY_RUN_FILE="$STATE_DIR/$KEY.deploy-run"
 if [ "$RESTART" = "1" ]; then
   # A restart pins afresh, so the pin PR the discarded run opened must not
   # stay open beside the new one. It was never merged: closing it changes
@@ -126,7 +145,7 @@ if [ "$RESTART" = "1" ]; then
     gh pr close "$(cat "$PIN_FILE")" --delete-branch \
       --comment "Superseded: fix_and_deploy.sh was restarted." >/dev/null || true
   fi
-  rm -f "$STATE" "$SHA_FILE" "$PIN_FILE"
+  rm -f "$STATE" "$SHA_FILE" "$PIN_FILE" "$DEPLOY_RUN_FILE"
 fi
 touch "$STATE"
 # A resumed run picks the commit back up rather than re-deriving it, so the
@@ -437,14 +456,86 @@ OK=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --format '{{
 REMOTE
 }
 
+# ── build / deploy ─────────────────────────────────────────────────
+#
+# Both paths hand the release to the host's own deploy tool, which records it
+# as the release, restarts onto it, verifies it, and restores the previous
+# release if it does not verify.
+#
+# This stage used to run `docker compose up` itself. That replaced the
+# container without telling the release record, so after the registry path's
+# first real release on 17 Sep every later deploy left the host still
+# recording that one: on 21 Sep it served 84c8f29 and recorded 21e0569.
+# Everything that trusts the record -- the root compose wrapper,
+# `teleautomation-deploy rollback`, and the automatic restore after a failed
+# release -- would have put four-day-old code back live. So neither path starts
+# the container any other way.
+
+# A release that fails verification restores whatever the record calls the
+# current release, so releasing onto a stale record turns a failed deploy into
+# an old one. Refuse, and say how to put the record right.
+assert_release_record_is_current() {
+  "${SSH[@]}" "$HOST_DEPLOY_TOOL status" >/dev/null 2>&1 \
+    || die "the host's release record does not name what production is serving ('$HOST_DEPLOY_TOOL status' on the host shows both). Record what is serving first -- tag its image $LOCAL_IMAGE:release-<sha> and run '$HOST_DEPLOY_TOOL deploy-local <sha>' -- then re-run"
+}
+
+# Dispatch the Operations deploy workflow for this commit and follow it to the
+# end. The workflow takes the image CI built from exactly this commit (building
+# it once if no push ever did) and asks the host to release that digest; its
+# deploy job fails unless the host verified the release.
+release_through_registry() {
+  local run="" state before out waited
+  # A resumed run follows a release it already started rather than queueing a
+  # second one behind it. A finished one is not followed: production did not
+  # match the target when this stage began, so whatever it did is not live.
+  if [ -s "$DEPLOY_RUN_FILE" ]; then
+    run="$(cat "$DEPLOY_RUN_FILE")"
+    state="$(ops_gh run view "$run" --json status --jq .status 2>/dev/null || true)"
+    case "$state" in
+      queued|in_progress|waiting|pending|requested) say "following deploy run $run, started earlier" ;;
+      *) run="" ;;
+    esac
+  fi
+  if [ -z "$run" ]; then
+    before="$(ops_gh run list --workflow deploy.yml --event workflow_dispatch --limit 30 \
+      --json databaseId --jq '.[].databaseId' 2>/dev/null | LC_ALL=C sort || true)"
+    out="$(ops_gh workflow run deploy.yml --ref main -f sha="$OPERATIONS_SHA" -f action=deploy 2>&1)" \
+      || die "could not start the deploy workflow: $out"
+    run="$(printf '%s\n' "$out" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\).*#\1#p' | head -1)"
+    waited=0
+    while [ -z "$run" ]; do
+      [ "$waited" -ge 120 ] && die "the deploy workflow was dispatched but no run appeared within 120s"
+      sleep 5
+      waited=$((waited + 5))
+      run="$(LC_ALL=C comm -13 <(printf '%s\n' "$before") \
+        <(ops_gh run list --workflow deploy.yml --event workflow_dispatch --limit 30 \
+            --json databaseId --jq '.[].databaseId' 2>/dev/null | LC_ALL=C sort) | tail -1)"
+    done
+    printf '%s' "$run" > "$DEPLOY_RUN_FILE"
+    say "dispatched deploy run $run"
+  fi
+  ops_gh run watch "$run" --exit-status --interval 10 >/dev/null \
+    || die "deploy run $run failed; the host restores and verifies the previous release when a new one does not verify — read the run before retrying"
+  [ "$(ops_gh run view "$run" --json jobs --jq '.jobs[] | select(.name == "deploy") | .conclusion')" = success ] \
+    || die "deploy run $run finished without its deploy job succeeding"
+  say "released ${OPERATIONS_SHA:0:7} by digest (run $run)"
+}
+
 run_build() {
   if production_matches_target; then
     say "production already serves ${OPERATIONS_SHA:0:7}, bound and healthy — nothing to build"
     return 0
   fi
-  "${SSH[@]}" "cd /opt/teleautomation/marketing && docker compose -p '$COMPOSE_PROJECT' \
-    --env-file '$PROD_ENV_FILE' -f '$COMPOSE_FILE' build '$SERVICE'" >/dev/null || die "build failed"
-  say "image built"
+  if [ "$DEPLOY_VIA" = host ]; then
+    # Tagged with the name deploy-local looks for, so the host tool can check
+    # the image was built from this commit before anything restarts.
+    "${SSH[@]}" "cd /opt/teleautomation/marketing && docker compose -p '$COMPOSE_PROJECT' \
+      --env-file '$PROD_ENV_FILE' -f '$COMPOSE_FILE' build '$SERVICE' \
+      && docker tag '$LOCAL_IMAGE' '$LOCAL_IMAGE:release-$OPERATIONS_SHA'" >/dev/null || die "build failed"
+    say "image built on the host as release-${OPERATIONS_SHA:0:7}"
+    return 0
+  fi
+  say "nothing to build here: the release is the image CI built from ${OPERATIONS_SHA:0:7}"
 }
 
 run_deploy() {
@@ -452,15 +543,20 @@ run_deploy() {
     say "production already serves ${OPERATIONS_SHA:0:7}, bound and healthy — nothing to deploy"
     return 0
   fi
-  "${SSH[@]}" "cd /opt/teleautomation/marketing && docker compose -p '$COMPOSE_PROJECT' \
-    --env-file '$PROD_ENV_FILE' -f '$COMPOSE_FILE' up -d --no-deps '$SERVICE'" >/dev/null || die "deploy failed"
-  say "container recreated"
+  assert_release_record_is_current
+  if [ "$DEPLOY_VIA" = host ]; then
+    "${SSH[@]}" "$HOST_DEPLOY_TOOL deploy-local '$OPERATIONS_SHA'" \
+      || die "deploy-local failed; the host restores and verifies the previous release when a new one does not verify"
+    say "released ${OPERATIONS_SHA:0:7} from the host build"
+    return 0
+  fi
+  release_through_registry
 }
 
 run_verify() {
-  "${SSH[@]}" bash -s -- "$OPERATIONS_SHA" "$COMPOSE_PROJECT" "$HEALTH_URL" "$PUBLIC_URL" <<'REMOTE' || die "verification failed"
+  "${SSH[@]}" bash -s -- "$OPERATIONS_SHA" "$COMPOSE_PROJECT" "$HEALTH_URL" "$PUBLIC_URL" "$HOST_DEPLOY_TOOL" <<'REMOTE' || die "verification failed"
 set -euo pipefail
-WANT="$1"; PROJECT="$2"; HEALTH="$3"; PUBLIC="$4"
+WANT="$1"; PROJECT="$2"; HEALTH="$3"; PUBLIC="$4"; TOOL="$5"
 for i in $(seq 1 30); do
   s=$(docker inspect "${PROJECT}-operations-api-1" --format '{{.State.Health.Status}}' 2>/dev/null || true)
   [ "$s" = "healthy" ] && break
@@ -479,6 +575,11 @@ echo "  containers $OK/$TOTAL healthy"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 15 "$PUBLIC")
 [ "$CODE" = "200" ] || { echo "  public returned $CODE" >&2; exit 1; }
 echo "  public    200"
+# Rollback, the root compose wrapper and a failed release's automatic restore
+# all act on the release record, so a deploy is not finished while the record
+# names anything other than what is serving.
+"$TOOL" status >/dev/null || { echo "  the release record does not name what is serving" >&2; exit 1; }
+echo "  release record matches"
 REMOTE
 }
 
