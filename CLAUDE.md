@@ -91,6 +91,16 @@ container with no 8210 binding still serves 502 through nginx. If they hold,
 both stages skip and `verify` still runs; if any fails, the deploy proceeds
 normally.
 
+`deploy` never starts the container itself. By default (`DEPLOY_VIA=registry`)
+it dispatches the Operations `deploy` workflow for the commit, which releases
+the image CI built from exactly that commit, by digest, through the host's
+`teleautomation-deploy`. `DEPLOY_VIA=host` is the break-glass path: `build`
+builds on the host and tags the image `release-<sha>`, and `deploy` hands it to
+`teleautomation-deploy deploy-local`. Either way the host records the release,
+verifies it, and restores the previous release if it does not verify; `verify`
+then also requires `teleautomation-deploy status` to show the record naming
+what is serving.
+
 This repository holds no environment specifics — hostnames and paths come from
 the environment (`KVM1_SSH`, `KVM1_SSH_KEY`, `PROD_ENV_FILE`), never from
 committed files. Keep it that way.
@@ -107,6 +117,11 @@ committed files. Keep it that way.
   `sync` refuses on mismatch.
 - **One deploy at a time.** `sync` refuses if a build or compose run is already
   in flight on the host.
+- **The release record names what is serving.** Rollback, the root
+  `teleautomation-compose` wrapper and a failed release's automatic restore all
+  act on the host's release record. A container started any other way leaves
+  it stale -- on 21 Sep it still named a release four days old -- so `deploy`
+  refuses to release onto a stale record and `verify` fails until it matches.
 - **Deploy with the project name and env file.** Omitting `-p` or
   `--env-file` produces orphan containers and a service with no port binding,
   which returns 502 while every container still reports healthy.
