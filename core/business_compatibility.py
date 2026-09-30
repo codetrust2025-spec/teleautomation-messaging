@@ -12,6 +12,23 @@ from fastapi.responses import RedirectResponse, Response
 PREFIXES = ("candidates", "data-room", "handler-expenses", "handler-salaries", "company-expenses", "public/slots", "api", "ai/daily-briefing")
 METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
+# The slot routes that read an invite with a model, and the confirm that
+# follows them, are slow by design -- the booking UI tells the candidate the
+# read "may take a few minutes".  A flat 60s ceiling cut them off mid-flight
+# and the cutoff reached the browser as an opaque error, which the booking
+# form still rendered as a successful booking.  Give those routes room, and
+# let a real timeout say plainly that Operations never answered.
+SLOW_MARKERS = ("extract-", "parse-screenshot")
+SLOW_SUFFIXES = ("/book",)
+
+
+def _timeout_for(path: str) -> float:
+    default = float(os.getenv("OPERATIONS_PROXY_TIMEOUT_SECONDS", "60"))
+    slow = float(os.getenv("OPERATIONS_PROXY_SLOW_TIMEOUT_SECONDS", "300"))
+    if any(marker in path for marker in SLOW_MARKERS) or path.endswith(SLOW_SUFFIXES):
+        return slow
+    return default
+
 
 def install_business_compatibility(app: FastAPI) -> None:
     async def forward(request: Request, path: str) -> Response:
@@ -36,8 +53,12 @@ def install_business_compatibility(app: FastAPI) -> None:
         for name in ("content-type", "accept", "x-request-id"):
             if request.headers.get(name):
                 headers[name] = request.headers[name]
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=False) as client:
-            upstream = await client.request(request.method, f"{internal_base}/{path}", params=list(request.query_params.multi_items()), content=await request.body(), headers=headers)
+        timeout = _timeout_for(path)
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+                upstream = await client.request(request.method, f"{internal_base}/{path}", params=list(request.query_params.multi_items()), content=await request.body(), headers=headers)
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail=f"Operations did not answer {path} within {timeout:.0f}s")
         excluded = {"content-length", "transfer-encoding", "connection", "content-encoding"}
         return Response(upstream.content, status_code=upstream.status_code, headers={k: v for k, v in upstream.headers.items() if k.lower() not in excluded})
 
