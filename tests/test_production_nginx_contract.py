@@ -117,3 +117,12 @@ def test_the_push_endpoint_is_not_accidentally_authenticated():
     assert "auth_basic" not in block
     assert "satisfy" not in block
     assert "proxy_pass" in block
+
+def test_the_apex_waits_as_long_as_the_operations_host_for_booking_reads():
+    """An invite or payment read can take up to 240 s; nginx's default 60 s
+    read timeout turned a slow read on the apex into a 504 while the same
+    request on operations.teleautomation.online (300 s) completed (11 Oct)."""
+    body = _uncommented()
+    for route in ("location ^~ /public/", "location ^~ /bookings/"):
+        line = next(l for l in body.splitlines() if route in l)
+        assert "proxy_read_timeout 300s;" in line, route
