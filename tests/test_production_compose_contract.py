@@ -10,7 +10,7 @@ COMPOSE = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
 # release, and a test that tracked the file automatically would guard
 # nothing. f952a08 adds the Gmail Pub/Sub push exemption
 # (teleautomation-business#25).
-OPERATIONS_RELEASE = "132e7cf0939d74cafac9264bac8b97b59cb77f38"
+OPERATIONS_RELEASE = "061f1f8efdc146a4af8ed93293839d0773f19db0"
 
 
 def test_production_compose_is_the_unified_stack() -> None:
@@ -77,3 +77,9 @@ def test_operations_api_is_seen_healthy_seconds_after_a_restart() -> None:
     # The steady-state probe is unchanged.
     assert "interval: 15s" in block and "retries: 10" in block
 
+
+
+def test_daybreak_headline_token_is_environment_only() -> None:
+    """The shared integration credential is injected by the protected host env."""
+    block = COMPOSE[COMPOSE.index("  operations-api:"):COMPOSE.index("\nvolumes:")]
+    assert "DAYBREAK_HEADLINE_TOKEN: ${DAYBREAK_HEADLINE_TOKEN:-}" in block

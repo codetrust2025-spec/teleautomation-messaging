@@ -24,7 +24,7 @@ name: teleautomation-production
 # approved production release. The source checkout must still be verified at
 # this exact commit before any build.
 x-release-shas:
-  operations: &operations-release 132e7cf0939d74cafac9264bac8b97b59cb77f38
+  operations: &operations-release 061f1f8efdc146a4af8ed93293839d0773f19db0
 
 x-capped-logs: &capped
   driver: json-file
@@ -236,6 +236,9 @@ services:
       # pool and the payment extraction settings all live here.
       AI_API_KEY: ${AI_API_KEY:?}
       OPS_API_TOKEN: ${OPS_API_TOKEN:?}
+      # Dedicated Daybreak-to-Operations bearer credential. Its value lives only
+      # in the protected host environment file.
+      DAYBREAK_HEADLINE_TOKEN: ${DAYBREAK_HEADLINE_TOKEN:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:?}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:?}
       AI_API_BASE_URL: ${AI_API_BASE_URL:-}
