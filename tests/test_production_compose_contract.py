@@ -83,3 +83,9 @@ def test_daybreak_headline_token_is_environment_only() -> None:
     """The shared integration credential is injected by the protected host env."""
     block = COMPOSE[COMPOSE.index("  operations-api:"):COMPOSE.index("\nvolumes:")]
     assert "DAYBREAK_HEADLINE_TOKEN: ${DAYBREAK_HEADLINE_TOKEN:-}" in block
+
+
+def test_daybreak_credential_auto_sync_is_opt_in() -> None:
+    """The recurring credential delivery stays off unless the host env enables it."""
+    block = COMPOSE[COMPOSE.index("  operations-api:"):COMPOSE.index("\nvolumes:")]
+    assert "DAYBREAK_CREDENTIAL_AUTO_SYNC_ENABLED: ${DAYBREAK_CREDENTIAL_AUTO_SYNC_ENABLED:-0}" in block

@@ -239,6 +239,10 @@ services:
       # Dedicated Daybreak-to-Operations bearer credential. Its value lives only
       # in the protected host environment file.
       DAYBREAK_HEADLINE_TOKEN: ${DAYBREAK_HEADLINE_TOKEN:-}
+      # Opt-in five-minute encrypted Data Room -> Daybreak credential delivery
+      # (Operations services/daybreak_credential_auto_sync.py). Off unless the
+      # protected host environment sets it to 1.
+      DAYBREAK_CREDENTIAL_AUTO_SYNC_ENABLED: ${DAYBREAK_CREDENTIAL_AUTO_SYNC_ENABLED:-0}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:?}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:?}
       AI_API_BASE_URL: ${AI_API_BASE_URL:-}
