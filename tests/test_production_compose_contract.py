@@ -10,7 +10,7 @@ COMPOSE = (ROOT / "docker-compose.production.yml").read_text(encoding="utf-8")
 # release, and a test that tracked the file automatically would guard
 # nothing. f952a08 adds the Gmail Pub/Sub push exemption
 # (teleautomation-business#25).
-OPERATIONS_RELEASE = "a4c468a360a3409c30de3535e0462dfe21b7bd29"
+OPERATIONS_RELEASE = "2cd254847194ffa236d01b31bfb9553c783c66af"
 
 
 def test_production_compose_is_the_unified_stack() -> None:
