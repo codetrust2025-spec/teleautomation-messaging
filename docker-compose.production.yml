@@ -132,6 +132,11 @@ services:
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN:?}
       WHATSAPP_WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET:?}
+      # Who receives Operations alerts (interview bookings, Gmail reconnect
+      # digests) on WhatsApp, comma separated. Without this pass-through the
+      # value never reached the container and every alert's WhatsApp leg was
+      # skipped (ops-watch #181).
+      WHATSAPP_SLOTS_NOTIFY_PHONES: ${WHATSAPP_SLOTS_NOTIFY_PHONES:-}
 
       # Web push. Also required: with no keys and a fresh volume, vapid_keys()
       # falls through to _generate_vapid_keys() and persists a NEW keypair

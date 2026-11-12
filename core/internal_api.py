@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationCommandV1(BaseModel):
@@ -90,8 +93,14 @@ def install_internal_routes(app: FastAPI) -> None:
                 client = get_bsp_client()
                 if client is not None and client.configured:
                     for phone in phones:
-                        await client.send_text(phone, whatsapp_text)
-                        whatsapp_deliveries += 1
+                        # send_text reports a refused send (bad key, number
+                        # outside the 24-hour window) as ok=False rather than
+                        # raising; only accepted sends are deliveries.
+                        result = await client.send_text(phone, whatsapp_text)
+                        if isinstance(result, dict) and result.get("ok"):
+                            whatsapp_deliveries += 1
+                        else:
+                            logger.warning("notification WhatsApp send to %s refused: %s", phone[-4:], result)
             return {"status": "ok", "web_push_deliveries": delivered, "whatsapp_deliveries": whatsapp_deliveries}
         except Exception:
             release(idempotency_key)
