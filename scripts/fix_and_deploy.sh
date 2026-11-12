@@ -170,36 +170,93 @@ branch_is_merged() {
 # How long to wait for a pull request's checks to exist before giving up.
 CHECKS_APPEAR_TIMEOUT="${CHECKS_APPEAR_TIMEOUT:-240}"
 
-# Wait until a pull request actually has checks, before watching them.
+# The checks each repository's verdict rests on. The gate must report `pass`;
+# the others must exist and be `pass` or `skipping`.
+#
+# Operations: `ci` is the check branch protection requires on main, and it is
+# the job that sums up every other lane, so it alone decides the verdict.
+# Marketing: main is not protected, and its `ci` job runs FIRST -- verify and
+# dual-service need it and only register once it finishes, skipped when the
+# lane does not want them. Waiting for `ci` alone would watch the classifier
+# and miss the heavy jobs, which is the exact mistake described below.
+OPS_GATE_CHECK="${OPS_GATE_CHECK:-ci}"
+OPS_OTHER_CHECKS="${OPS_OTHER_CHECKS:-}"
+PIN_GATE_CHECK="${PIN_GATE_CHECK:-ci}"
+PIN_OTHER_CHECKS="${PIN_OTHER_CHECKS:-verify dual-service}"
+
+# States of every row `gh pr checks` reports under one check name, one per line.
+# Without a terminal gh prints tab-separated rows: name, state, elapsed, url.
+# A name can appear more than once when more than one run covers the commit.
+check_states() {
+  printf '%s\n' "$1" | awk -F'\t' -v n="$2" '$1 == n { print $2 }'
+}
+
+# Wait until a pull request has every check its verdict rests on, before
+# watching them.
 #
 # `gh pr checks --watch` exits 0 when a pull request has no checks at all: it
 # prints "no checks reported" and returns success. Immediately after `pr create`
 # the workflow has usually not registered yet, so a watch that starts in that
 # window reports green for a run that never happened, and the next stage merges.
 #
-# This is not hypothetical. Opening a pull request here and watching it one
-# second later returned exit 0 with no checks, and the run appeared seconds
-# after that. The window is small, which is what makes it dangerous: it is a
-# race that passes almost every time.
+# Waiting for *a* check is not enough either. The watch only follows the checks
+# that exist when it starts, and a job with `needs:` registers only once what it
+# needs has finished. On 12 Nov 2026 (Operations #479) only the four-second
+# `classify` job existed; the watch saw it pass and the script said "Operations
+# CI green" while `python` and the required `ci` gate -- which then failed --
+# had not registered. Branch protection refused the merge; the verdict was
+# still wrong. So this waits for the named checks, not for any check.
 #
-# Timing out is a failure, not a pass. A pull request that never registers a
-# check has not been verified, and merging it would put an unverified commit on
+# Timing out is a failure, not a pass. A pull request that never registers its
+# gate has not been verified, and merging it would put an unverified commit on
 # main and then into production.
 await_checks() {
-  local what="$1"; shift
-  local waited=0 out
+  local what="$1" required="$2"; shift 2
+  local waited=0 out name missing
   while :; do
     out="$("$@" 2>&1 || true)"
-    case "$out" in
-      "" | *"no checks reported"*) : ;;
-      *) return 0 ;;
-    esac
+    missing=""
+    for name in $required; do
+      [ -n "$(check_states "$out" "$name")" ] || missing="$missing $name"
+    done
+    [ -z "$missing" ] && return 0
     if [ "$waited" -ge "$CHECKS_APPEAR_TIMEOUT" ]; then
-      die "$what registered no checks within ${CHECKS_APPEAR_TIMEOUT}s - refusing to treat an absent run as a pass"
+      die "$what has not registered${missing} within ${CHECKS_APPEAR_TIMEOUT}s - refusing to treat an absent run as a pass"
     fi
     sleep 10
     waited=$((waited + 10))
   done
+}
+
+# Watch a pull request's checks to completion and decide from what is reported
+# afterwards, not from the watch's exit code.
+#
+# The watch's 0 only means the checks it saw at the start finished without a
+# failure. Jobs can register while it runs, so the checks are re-read: anything
+# still pending is watched again, and the verdict is green only if the gate is
+# reported and every row of it is `pass`, the other required checks are `pass`
+# or `skipping`, and nothing else reported failed or was cancelled.
+watch_checks() {
+  local what="$1" gate="$2" others="$3"; shift 3
+  local round out states name bad
+  for round in 1 2 3 4 5; do
+    "$@" --watch --interval 20 >/dev/null || die "$what did not pass — read the run before retrying"
+    out="$("$@" 2>&1 || true)"
+    printf '%s\n' "$out" | awk -F'\t' '$2 == "pending" { found = 1 } END { exit !found }' || break
+    [ "$round" -lt 5 ] || die "$what still has pending checks after $round watches — read the run before retrying"
+  done
+  states="$(check_states "$out" "$gate")"
+  if [ -z "$states" ] || printf '%s\n' "$states" | grep -qvx pass; then
+    die "$what: required check $gate is $(printf '%s' "${states:-absent}" | tr '\n' ' ') — not green"
+  fi
+  for name in $others; do
+    states="$(check_states "$out" "$name")"
+    if [ -z "$states" ] || printf '%s\n' "$states" | grep -qvxE 'pass|skipping'; then
+      die "$what: required check $name is $(printf '%s' "${states:-absent}" | tr '\n' ' ') — not green"
+    fi
+  done
+  bad="$(printf '%s\n' "$out" | awk -F'\t' 'NF >= 2 && $2 != "pass" && $2 != "skipping" { print $1 " " $2 }' | tr '\n' ';')"
+  [ -z "$bad" ] || die "$what did not pass ($bad) — read the run before retrying"
 }
 
 # ── ops_pr ──────────────────────────────────────────────────────────────────
@@ -262,9 +319,10 @@ run_ops_ci() {
   fi
   require_pinned_head
   say "polling Operations checks"
-  await_checks "Operations PR $OPERATIONS_BRANCH" ops_gh pr checks "$OPERATIONS_BRANCH"
-  ops_gh pr checks "$OPERATIONS_BRANCH" --watch --interval 20 >/dev/null \
-    || die "Operations CI did not pass — read the run before retrying"
+  await_checks "Operations PR $OPERATIONS_BRANCH" "$OPS_GATE_CHECK $OPS_OTHER_CHECKS" \
+    ops_gh pr checks "$OPERATIONS_BRANCH"
+  watch_checks "Operations CI" "$OPS_GATE_CHECK" "$OPS_OTHER_CHECKS" \
+    ops_gh pr checks "$OPERATIONS_BRANCH"
   say "Operations CI green"
 }
 
@@ -381,12 +439,14 @@ run_pin_ci() {
   # Which lane the pin takes is decided in CI (scripts/ci_classify.sh), not
   # here: a pin of a frontend-only Operations range runs the compose and
   # contract checks, any other range adds dual-service, and Marketing's own
-  # suite is skipped because a pin leaves every Marketing input unchanged. The
-  # watch below still fails on any failing or missing check.
+  # suite is skipped because a pin leaves every Marketing input unchanged.
+  # Skipped lanes still register as checks, so all three jobs are waited for
+  # and the verdict still fails on any failing or missing check.
   say "polling pin checks"
-  await_checks "pin PR $(pin_branch)" gh pr checks "$(pin_branch)"
-  gh pr checks "$(pin_branch)" --watch --interval 20 >/dev/null \
-    || die "pin CI did not pass — read the run before retrying"
+  await_checks "pin PR $(pin_branch)" "$PIN_GATE_CHECK $PIN_OTHER_CHECKS" \
+    gh pr checks "$(pin_branch)"
+  watch_checks "pin CI" "$PIN_GATE_CHECK" "$PIN_OTHER_CHECKS" \
+    gh pr checks "$(pin_branch)"
   say "pin CI green"
 }
 
