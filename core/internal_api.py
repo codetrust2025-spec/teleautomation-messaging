@@ -7,6 +7,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -80,28 +81,78 @@ def install_internal_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="X-Idempotency-Key is required")
         if not claim(idempotency_key):
             return {"status": "duplicate", "web_push_deliveries": 0, "whatsapp_deliveries": 0}
-        try:
-            from features import web_push
-            delivered = 0
-            for username in web_push.all_usernames_with_subscriptions():
-                delivered += int(bool(web_push.send_to_user(username, title=body.title, body=body.body, tag=body.tag)))
-            whatsapp_deliveries = 0
-            whatsapp_text = body.whatsapp_text.strip()
-            phones = [item.strip() for item in os.getenv("WHATSAPP_SLOTS_NOTIFY_PHONES", "").split(",") if item.strip()]
-            if whatsapp_text and phones:
-                from services.whatsapp_bsp import get_bsp_client
-                client = get_bsp_client()
-                if client is not None and client.configured:
-                    for phone in phones:
-                        # send_text reports a refused send (bad key, number
-                        # outside the 24-hour window) as ok=False rather than
-                        # raising; only accepted sends are deliveries.
-                        result = await client.send_text(phone, whatsapp_text)
-                        if isinstance(result, dict) and result.get("ok"):
-                            whatsapp_deliveries += 1
-                        else:
-                            logger.warning("notification WhatsApp send to %s refused: %s", phone[-4:], result)
-            return {"status": "ok", "web_push_deliveries": delivered, "whatsapp_deliveries": whatsapp_deliveries}
-        except Exception:
+        result = await _deliver_notification(body)
+        if result["attempted"] and not (result["web_push_deliveries"] or result["whatsapp_deliveries"]) and result["errors"]:
+            # Nothing went out and something failed. Answer 503 so Operations
+            # keeps the notification pending and retries it (bounded, then
+            # "dead", which ops_health reports) instead of recording a
+            # delivery that never happened. Once any recipient has been reached
+            # the claim is kept, so a retry never repeats an alert to anyone.
             release(idempotency_key)
-            raise
+            return JSONResponse({"status": "undelivered", **result}, status_code=503)
+        return {"status": "ok", **result}
+
+
+def _alert_phones() -> list[str]:
+    return [item.strip() for item in os.getenv("WHATSAPP_SLOTS_NOTIFY_PHONES", "").split(",") if item.strip()]
+
+
+def _template_param(text: str) -> str:
+    # Meta rejects template variables with newlines, tabs or more than four
+    # consecutive spaces, and caps a variable at 1024 characters.
+    flat = " | ".join(line.strip() for line in text.splitlines() if line.strip())
+    flat = " ".join(flat.split())
+    return flat if len(flat) <= 1024 else flat[:1021] + "..."
+
+
+async def _deliver_notification(body: "NotificationCommandV1") -> dict:
+    """Send one notification to every configured recipient, once.
+
+    Counts only sends the provider accepted. Each recipient is isolated, so one
+    failure neither hides the others nor turns into a retry that repeats them.
+    """
+    from features import web_push
+
+    out = {"web_push_deliveries": 0, "web_push_failures": 0, "whatsapp_deliveries": 0,
+           "whatsapp_failures": 0, "whatsapp_mode": "", "attempted": 0, "errors": []}
+    for username in web_push.all_usernames_with_subscriptions():
+        out["attempted"] += 1
+        try:
+            ok = bool(web_push.send_to_user(username, title=body.title, body=body.body, tag=body.tag))
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            out["errors"].append(f"push:{type(exc).__name__}")
+        out["web_push_deliveries" if ok else "web_push_failures"] += 1
+
+    whatsapp_text = body.whatsapp_text.strip()
+    phones = _alert_phones()
+    if not (whatsapp_text and phones):
+        return out
+    from services.whatsapp_bsp import get_bsp_client
+
+    client = get_bsp_client()
+    if client is None or not client.configured:
+        out["errors"].append("whatsapp:not_configured")
+        return out
+    template = os.getenv("WHATSAPP_ALERT_TEMPLATE", "").strip()
+    language = os.getenv("WHATSAPP_ALERT_TEMPLATE_LANG", "").strip() or "en"
+    # Free text reaches a number only inside its 24-hour customer-service
+    # window; an approved template reaches it at any time.
+    out["whatsapp_mode"] = "template" if template else "text"
+    for phone in phones:
+        out["attempted"] += 1
+        try:
+            if template:
+                result = await client.send_template(phone, template, [_template_param(whatsapp_text)],
+                                                    language_code=language)
+            else:
+                result = await client.send_text(phone, whatsapp_text)
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": type(exc).__name__}
+        if isinstance(result, dict) and result.get("ok"):
+            out["whatsapp_deliveries"] += 1
+        else:
+            out["whatsapp_failures"] += 1
+            out["errors"].append("whatsapp:refused")
+            logger.warning("notification WhatsApp %s to ...%s refused: %s", out["whatsapp_mode"], phone[-4:], result)
+    return out
