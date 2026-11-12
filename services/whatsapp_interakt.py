@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 _INTERAKT_SEND_URL = "https://api.interakt.ai/v1/public/message/"
 
 
+def _accepted(data: object) -> bool:
+    """Interakt acknowledges a queued message with result=true and an id and
+    reports a refusal it did not express as an HTTP error with result=false."""
+    return not (isinstance(data, dict) and data.get("result") is False)
+
+
 class InteraktClient:
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = (api_key or whatsapp_api_key()).strip()
@@ -58,6 +64,11 @@ class InteraktClient:
             data = resp.json() if resp.content else {}
             if resp.status_code >= 400:
                 logger.warning("Interakt send failed %s: %s", resp.status_code, data)
+                return {"ok": False, "status_code": resp.status_code, "response": data}
+            if not _accepted(data):
+                # Interakt can answer 2xx with result=false (for example an
+                # unapproved template); that is a refusal, not a send.
+                logger.warning("Interakt send refused: %s", data)
                 return {"ok": False, "status_code": resp.status_code, "response": data}
             return {"ok": True, "response": data}
         except Exception as exc:
@@ -103,6 +114,11 @@ class InteraktClient:
             data = resp.json() if resp.content else {}
             if resp.status_code >= 400:
                 logger.warning("Interakt template failed %s: %s", resp.status_code, data)
+                return {"ok": False, "status_code": resp.status_code, "response": data}
+            if not _accepted(data):
+                # Interakt can answer 2xx with result=false (for example an
+                # unapproved template); that is a refusal, not a send.
+                logger.warning("Interakt template refused: %s", data)
                 return {"ok": False, "status_code": resp.status_code, "response": data}
             return {"ok": True, "response": data}
         except Exception as exc:

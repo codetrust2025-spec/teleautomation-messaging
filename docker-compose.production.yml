@@ -137,6 +137,11 @@ services:
       # value never reached the container and every alert's WhatsApp leg was
       # skipped (ops-watch #181).
       WHATSAPP_SLOTS_NOTIFY_PHONES: ${WHATSAPP_SLOTS_NOTIFY_PHONES:-}
+      # Approved Interakt template for those alerts (one body variable, {{1}}).
+      # Unset, alerts go as free text, which only reaches a number inside its
+      # 24-hour customer-service window.
+      WHATSAPP_ALERT_TEMPLATE: ${WHATSAPP_ALERT_TEMPLATE:-}
+      WHATSAPP_ALERT_TEMPLATE_LANG: ${WHATSAPP_ALERT_TEMPLATE_LANG:-}
 
       # Web push. Also required: with no keys and a fresh volume, vapid_keys()
       # falls through to _generate_vapid_keys() and persists a NEW keypair
